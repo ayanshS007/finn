@@ -36,7 +36,7 @@ Numbers before words. At most one line of prose per card. Every card shows a "wh
 3. Append a dated entry to docs/BUILD_LOG.md: what changed, decisions, open issues.
 4. Run make test; it must pass before pushing.
 5. Push and open a PR titled "Segment SX: <name>" listing: what was built, how it was tested (summary of command output), what is stubbed, what the next segment needs.
-6. Wait for CI. If it is red, fix it. When it is green, STOP. Do not merge. Reply with the PR link and a short summary. I review and merge it on GitHub myself; the next segment starts from the updated main.
+6. Open the PR and wait for CI. If it is red, fix and push. When it is green, end your turn with the PR link. Do not merge, and ignore merge notifications: I merge myself and will tell you if anything is needed.
 7. Never commit .env or API keys.
 
 ## Repo layout
