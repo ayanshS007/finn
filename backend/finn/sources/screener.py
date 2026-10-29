@@ -30,6 +30,7 @@ class ScreenerTable:
     df: pd.DataFrame  # index: row label; columns: period labels as printed ("Sep 2026", "TTM")
     unit: str | None  # as printed on the page, e.g. "Rs. Crores"; None where none is stated
     unit_original: str | None  # crore | lakh | million | None
+    row_text: dict[str, str] = field(default_factory=dict)  # row label -> row as printed
 
 
 @dataclass
@@ -45,6 +46,7 @@ class ScreenerCompany:
     concalls: list[dict]  # {period, transcript_url, ppt_url, rec_url}
     result_pdfs: dict[str, str]  # period label -> results PDF url ("Raw PDF" row)
     warnings: list[str] = field(default_factory=list)
+    page_text: str = ""  # visible text of the whole page: the source for quote_match
 
     @property
     def market_cap_cr(self) -> float | None:
@@ -106,10 +108,11 @@ def _unit(section: Tag) -> tuple[str | None, str | None, str | None]:
     return None, None, None
 
 
-def _parse_table(table: Tag) -> tuple[pd.DataFrame, dict[str, str]]:
+def _parse_table(table: Tag) -> tuple[pd.DataFrame, dict[str, str], dict[str, str]]:
     headers = [_text(th) for th in table.select("thead th")][1:]
     rows: dict[str, list[float | None]] = {}
     links: dict[str, str] = {}
+    row_text: dict[str, str] = {}
     for tr in table.select("tbody tr"):
         cells = tr.find_all("td")
         label = re.sub(r"\s*\+$", "", _text(cells[0])) if cells else ""
@@ -120,11 +123,12 @@ def _parse_table(table: Tag) -> tuple[pd.DataFrame, dict[str, str]]:
                 if (a := td.find("a", href=True)) is not None:
                     links[header] = a["href"]
             continue
+        row_text[label] = f"{label} " + " ".join(_text(td) for td in cells[1:])
         values = [parse_number(_text(td)) for td in cells[1:]]
         values += [None] * (len(headers) - len(values))
         rows[label] = values[: len(headers)]
     df = pd.DataFrame.from_dict(rows, orient="index", columns=headers, dtype="float64")
-    return df.dropna(how="all"), links
+    return df.dropna(how="all"), links, row_text
 
 
 def parse_company_page(html: str, symbol: str, url: str) -> ScreenerCompany:
@@ -142,11 +146,11 @@ def parse_company_page(html: str, symbol: str, url: str) -> ScreenerCompany:
             continue
         section_basis, unit, unit_original = _unit(section)
         basis = basis or section_basis
-        df, links = _parse_table(table)
+        df, links, row_text = _parse_table(table)
         if df.empty:
             warnings.append(f"table empty: {name}")
             continue
-        tables[name] = ScreenerTable(df, unit, unit_original)
+        tables[name] = ScreenerTable(df, unit, unit_original, row_text)
         if name == "quarterly":
             result_pdfs = {k: urljoin(url, v) for k, v in links.items()}
     if basis is None:
@@ -171,6 +175,7 @@ def parse_company_page(html: str, symbol: str, url: str) -> ScreenerCompany:
         concalls=concalls,
         result_pdfs=result_pdfs,
         warnings=warnings,
+        page_text=_text(soup),
     )
 
 
