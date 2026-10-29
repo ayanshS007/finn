@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finn"
+version = "0.1.0"
+description = "FINN: mobile-first investment agent for NSE/BSE filings"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx",
+    "pydantic>=2",
+    "pdfplumber",
+    "pypdf",
+    "rank-bm25",
+    "yfinance",
+    "pandas",
+    "pyarrow",
+    "supabase",
+    "fastapi",
+    "uvicorn",
+    "sse-starlette",
+    "python-dotenv",
+    "pyyaml",
+    "groq",
+    "google-genai",
+    "tavily-python",
+    "bse",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[tool.setuptools.packages.find]
+include = ["finn*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
