@@ -26,6 +26,8 @@ dependencies = [
     "google-genai",
     "tavily-python",
     "bse",
+    "beautifulsoup4",
+    "lxml",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +38,7 @@ include = ["finn*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["live: hits real sources over the network; skipped unless --run-live is given"]
 
 [tool.ruff]
 line-length = 100

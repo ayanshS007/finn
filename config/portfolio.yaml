@@ -1,4 +1,4 @@
-# FINN portfolio: 18 NSE symbols. SMALLCAP_TBD is filled in by segment S1.
+# FINN portfolio: 18 NSE symbols, frozen in segment S1 (see docs/COVERAGE.md).
 portfolio:
   - RELIANCE
   - HDFCBANK
@@ -17,7 +17,7 @@ portfolio:
   - HAL
   - PAYTM
   - KPITTECH
-  - SMALLCAP_TBD
+  - GRAVITA  # small-cap pick: passes every coverage check, most NSE filings among candidates
 
 # Tickers with a full Pull dossier (Promise Ledger + strips).
 research_set:
