@@ -16,7 +16,7 @@ dependencies = [
     "yfinance",
     "pandas",
     "pyarrow",
-    "supabase",
+    "supabase>=2.33",  # accepts the new sb_publishable_ / sb_secret_ keys
     "fastapi",
     "uvicorn",
     "sse-starlette",
