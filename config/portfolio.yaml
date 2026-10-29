@@ -1,0 +1,26 @@
+# FINN portfolio: 18 NSE symbols. SMALLCAP_TBD is filled in by segment S1.
+portfolio:
+  - RELIANCE
+  - HDFCBANK
+  - INFY
+  - ITC
+  - LT
+  - BHARTIARTL
+  - MARUTI
+  - SUNPHARMA
+  - BAJFINANCE
+  - ADANIENT
+  - ETERNAL
+  - TRENT
+  - DIXON
+  - POLYCAB
+  - HAL
+  - PAYTM
+  - KPITTECH
+  - SMALLCAP_TBD
+
+# Tickers with a full Pull dossier (Promise Ledger + strips).
+research_set:
+  - INFY
+  - DIXON
+  - POLYCAB
