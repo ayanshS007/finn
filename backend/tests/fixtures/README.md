@@ -18,3 +18,18 @@ Captured by `scripts/capture_fixtures.py` (last run 2026-10-29). Parser tests ru
 | `screener_HDFCBANK.html` | https://www.screener.in/company/HDFCBANK/consolidated/ |
 | `screener_INFY.html` | https://www.screener.in/company/INFY/consolidated/ |
 | `transcript_INFY.pdf` | https://www.bseindia.com/stockinfo/AnnPdfOpen.aspx?Pname=7982fc61-7765-4981-ab3d-6aec36ba2137.pdf |
+
+## XBRL fixtures (segment S2)
+
+Captured by `scripts/capture_xbrl_fixtures.py` (2026-10-29) from `/api/integrated-filing-results`; the XBRL files are saved unmodified.
+
+| file | source |
+|---|---|
+| `xbrl_INFY_FY27Q2_consolidated.xml` | https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1745058_23102026082117_WEB.xml |
+| `xbrl_INFY_FY27Q1_consolidated.xml` | https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1700136_23072026054446_WEB.xml |
+| `xbrl_INFY_FY26Q2_consolidated.xml` | https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1551001_16102025094433_WEB.xml |
+| `xbrl_HDFCBANK_FY27Q2_consolidated.xml` | https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_BANKING_1740913_17102026054812_WEB.xml (banking taxonomy) |
+| `xbrl_GRAVITA_FY27Q2_consolidated.xml` | https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1747256_27102026084426_WEB.xml |
+| `xbrl_GRAVITA_FY27Q2_standalone.xml` | https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1747260_27102026084836_WEB.xml (standalone-only test) |
+| `xbrl_BAJFINANCE_FY27Q2_consolidated.xml` | https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_NBFC_INDAS_1742040_19102026075918_WEB.xml (NBFC taxonomy) |
+| `nse_integrated_results_GRAVITA.json` | /api/integrated-filing-results?index=equities&symbol=GRAVITA&period_ended=all&type=Integrated Filing- Financials |
