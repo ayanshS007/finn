@@ -9,6 +9,13 @@ the text (quote_match >= 0.4, one retry, else the drawer); a second small-model 
 label (1-3 goes to the drawer). The materiality score then decides card / one-liner / drawer, and a
 card gets a why_line, a one-liner a one-liner, both behind the number check.
 
+A results.filed filing then gets its results card (finn.enrich.results_card) and a management_change
+of tier cxo or director its people card (finn.enrich.people_card): the card is merged into
+card_json, the facts behind it are written to the facts table, and the why-line is written with the
+figures the code made. A card whose source is blocked or whose model is rate limited stays pending
+(card_json.card_error); scripts/build_cards.py rebuilds it. A second filing of the same company and
+period collapses into the first (drawer, "duplicate of ...").
+
 Free tier only: a rate-limited call fails over once and then leaves the filing *pending* (status
 NULL); the next run picks it up again. Nothing loops. The actual cost of a run is always zero.
 
@@ -563,7 +570,11 @@ def main(argv: list[str] | None = None) -> int:
     while True:
         try:
             summary = run_once(
-                since=args.since, source=args.source, db=db, symbols=args.symbol
+                since=args.since,
+                source=args.source,
+                db=db,
+                symbols=args.symbol,
+                cards=not replay,  # replay mode touches no live source
             )
         except SourceError as exc:
             log.error("%s", exc)  # stop and report; fixtures are never a stand-in for a live source
