@@ -196,7 +196,7 @@ def test_rebuild_skips_a_card_that_exists_unless_forced_and_never_calls_twice():
 def test_rebuild_marks_a_blocked_source_pending_and_goes_on():
     from finn.sources.http import SourceBlocked
 
-    def blocked(symbol, period_end=None):
+    def blocked(symbol, period_end=None, bridge=None):
         raise SourceBlocked("NSE answered 403", 403)
 
     db = FakeSupabase(results_rows())

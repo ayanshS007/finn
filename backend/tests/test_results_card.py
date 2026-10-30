@@ -25,9 +25,10 @@ INFY_ROW = {
 
 
 def facts_fn(client, fetch, screener_fetch=no_screener):
-    return lambda symbol, period_end=None: results_facts(
-        symbol, client=client, fetch=fetch, screener_fetch=screener_fetch, period_end=period_end
-    )
+    return lambda symbol, period_end=None, bridge=None: results_facts(
+        symbol, client=client, fetch=fetch, screener_fetch=screener_fetch, period_end=period_end,
+        bridge=bridge,
+    )  # fmt: skip
 
 
 def no_pdf(url, pages=3):
@@ -245,7 +246,7 @@ def pdf_reply(rows=PDF_ROWS, header="Rs. in crore", basis="consolidated"):
     return {"basis": basis, "unit_header": header, "rows": rows}
 
 
-def earlier_quarters_only(symbol, period_end=None):
+def earlier_quarters_only(symbol, period_end=None, bridge=None):
     """What results_facts gives when NSE has not listed the quarter's XBRL yet."""
     facts = results_facts(
         symbol, client=FakeNSE(raw_of("INFY")), fetch=Fetcher(), screener_fetch=no_screener
@@ -383,7 +384,7 @@ def test_a_second_filing_for_the_same_period_collapses_into_the_first():
 
 
 def test_a_blocked_source_raises_and_is_not_papered_over():
-    def blocked(symbol, period_end=None):
+    def blocked(symbol, period_end=None, bridge=None):
         raise SourceBlocked("NSE answered 403", 403)
 
     with pytest.raises(SourceBlocked):
@@ -397,3 +398,58 @@ def test_a_blocked_source_raises_and_is_not_papered_over():
 )  # fmt: skip
 def test_parse_printed(printed, value):
     assert rc.parse_printed(printed) == value
+
+
+# -- associates, joint ventures and discontinued operations sit between pbt less tax and pat ---------
+
+
+def associate_filing(share, pat, discontinued=0):
+    facts = [
+        ("RevenueFromOperations", "OneD", 5000 * CR),
+        ("OtherIncome", "OneD", 50 * CR),
+        ("FinanceCosts", "OneD", 20 * CR),
+        ("DepreciationDepletionAndAmortisationExpense", "OneD", 100 * CR),
+        ("ProfitBeforeExceptionalItemsAndTax", "OneD", 1000 * CR),
+        ("ExceptionalItemsBeforeTax", "OneD", 0),
+        ("ProfitBeforeTax", "OneD", 1000 * CR),
+        ("TaxExpense", "OneD", 250 * CR),
+        ("ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod", "OneD", share * CR),
+        ("ProfitLossFromDiscontinuedOperationsAfterTax", "OneD", discontinued * CR),
+        ("ProfitLossForPeriod", "OneD", pat * CR),
+    ]  # fmt: skip
+    url = "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_999002_X_WEB.xml"
+    raw = {"data": [raw_row("30-SEP-2026", "consolidated", url, "20-Oct-2026 10:00:00")]}
+    data = make_xbrl("consolidated", CTX, facts)
+
+    def no_company(symbol):
+        from finn.sources.http import SourceError
+
+        raise SourceError("screener not available in this test")
+
+    return rc.Deps(results_facts=facts_fn(FakeNSE(raw), lambda u: data, no_company), pdf=no_pdf)
+
+
+def test_share_of_associates_and_discontinued_operations_close_the_pat_bridge():
+    # Maruti / Trent / KPIT / Adani Enterprises all failed the plain check for this reason
+    card = rc.build_results_card(ROW, associate_filing(share=69, pat=819))  # 1000 - 250 + 69
+    assert card.fragment["state"] == "ok" and card.fragment["associates_and_discontinued_cr"] == 69.0
+    arithmetic = next(c for c in card.fragment["checks"] if c["name"] == "arithmetic")
+    assert arithmetic["ok"] and "associates" in arithmetic["detail"]
+    loss = rc.build_results_card(ROW, associate_filing(share=-21, pat=729))  # a share of loss
+    assert loss.fragment["state"] == "ok"
+    both = rc.build_results_card(ROW, associate_filing(share=40, discontinued=-10, pat=780))
+    assert both.fragment["state"] == "ok" and both.fragment["associates_and_discontinued_cr"] == 30.0
+
+
+def test_a_pat_the_bridge_does_not_explain_is_still_check_source():
+    card = rc.build_results_card(ROW, associate_filing(share=69, pat=900))
+    assert card.fragment["state"] == "check_source" and "lines" not in card.fragment
+    assert "associates_and_discontinued_cr" not in card.fragment
+
+
+def test_no_such_lines_means_the_plain_check_and_no_bridge_field():
+    card = rc.build_results_card(ROW, synthetic(0, pbt=1000, tax=250, pat=750))
+    assert card.fragment["associates_and_discontinued_cr"] is None
+    assert next(c for c in card.fragment["checks"] if c["name"] == "arithmetic")["detail"] == (
+        "pat = pbt - tax within 1%"
+    )

@@ -106,7 +106,7 @@ class ResultsCard:
 
 @dataclass
 class Deps:
-    results_facts: Callable[..., list[Fact]] = results_facts
+    results_facts: Callable[..., list[Fact]] = results_facts  # (symbol, period_end=, bridge=)
     pdf: Callable = pdf_excerpt
     router: Router | None = None
     duplicate_of: Callable[[str, str, str | None], str | None] = lambda *_: None
@@ -336,7 +336,8 @@ def build_results_card(row: dict, deps: Deps | None = None) -> ResultsCard:
     if other:
         return ResultsCard({**base, "state": "duplicate", "duplicate_of": other})
 
-    facts = deps.results_facts(symbol, period_end=end)
+    bridge: dict[str, float] = {}
+    facts = deps.results_facts(symbol, period_end=end, bridge=bridge)
     current = _by_metric(facts, cur)
     source = "xbrl"
     if not current or not all(is_xbrl_fact(f) for f in current.values()):
@@ -377,8 +378,17 @@ def build_results_card(row: dict, deps: Deps | None = None) -> ResultsCard:
         _check("quote_match", weakest >= THRESHOLD, f"lowest {weakest:.2f}, minimum {THRESHOLD}")
     )
     pbt, tax, pat = (current[m].value_cr if m in current else None for m in ("pbt", "tax", "pat"))
-    arithmetic = arithmetic_ok(pbt, tax, pat)
-    checks.append(_check("arithmetic", arithmetic, "pat = pbt - tax within 1%"))
+    other = bridge.get(cur) if source == "xbrl" else None  # associates / JVs / discontinued
+    arithmetic = arithmetic_ok(pbt, tax, pat, other=other)
+    checks.append(
+        _check(
+            "arithmetic",
+            arithmetic,
+            "pat = pbt - tax + share of associates/JVs and discontinued operations, within 1%"
+            if other
+            else "pat = pbt - tax within 1%",
+        )
+    )
     same_basis = len({f.basis for f in current.values()}) == 1
     checks.append(_check("one_basis", same_basis, basis or "none"))
 
@@ -419,6 +429,7 @@ def build_results_card(row: dict, deps: Deps | None = None) -> ResultsCard:
         "basis": basis,
         "source_url": current[wanted[0]].source_url,
         "has_exceptional_items": exceptional,
+        "associates_and_discontinued_cr": _round(other) if other else None,
         "lines": lines,
         "checks": checks,
     }
