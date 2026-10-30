@@ -184,9 +184,12 @@ def test_dates_are_parsed_in_code_and_an_unreadable_one_is_null():
     assert card.fragment["people"][0]["effective_date"] is None
 
 
-def test_an_unknown_change_value_is_dropped():
-    card, _, _ = build([{"people": [joiner(change=field("promoted", "assumed charge as MD & CEO"))]}] * 2)  # fmt: skip
-    assert card.fragment["people"][0]["change"] is None
+def test_a_person_with_no_checked_change_is_not_on_the_card():
+    # HDFC Bank's 27 Oct letter also names KMPs as contact persons: they neither join nor leave
+    contact = joiner(name=field("Anup Bagchi"), change=field("promoted", "assumed charge as MD & CEO"))  # fmt: skip
+    card, _, _ = build([{"people": [contact, leaver()]}] * 2)
+    assert [p["name"] for p in card.fragment["people"]] == ["Mr. Sashidhar Jagdishan"]
+    assert any("no checked joins/leaves" in d for d in card.fragment["dropped"])
 
 
 def test_no_attachment_text_is_check_source_without_a_model_call():

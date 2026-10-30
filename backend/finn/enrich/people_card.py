@@ -153,6 +153,9 @@ def _clean(person: PersonOut, source: str, dropped: list[str]) -> Person | None:
     if "name" not in kept:
         dropped.append("person: no usable name")
         return None
+    if "change" not in kept:  # named in passing (e.g. a contact person): not a joiner or leaver
+        dropped.append(f"person {kept['name'][0]}: no checked joins/leaves")
+        return None
     out = Person(kept["name"][0])
     out.evidence = {k: {"quote": getattr(person, k).quote, "quote_match": round(m, 4)}
                     for k, (_, m) in kept.items()}  # fmt: skip
