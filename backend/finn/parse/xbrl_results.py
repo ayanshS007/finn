@@ -9,6 +9,12 @@ quarter last year live in the earlier filings, which results_facts fetches. Thre
 * NBFC (Ind AS with InterestEarned and no InterestExpended)
 
 Values are plain rupees (unitRef INR) and go through finn.normalise.units.
+
+EBITDA excludes exceptional items: ebitda = pbt + exceptional_items_added_back + finance_costs +
+d_and_a - other_income, where a loss is added back and a gain subtracted. The filing's
+ExceptionalItemsBeforeTax line gives the amount; its sign convention is read off the filing itself
+(ProfitBeforeExceptionalItemsAndTax - ProfitBeforeTax is positive for a loss), so it holds
+whichever way a filer signs the line. Every fact of a period then carries has_exceptional_items.
 """
 
 from __future__ import annotations
@@ -58,6 +64,10 @@ class XbrlError(SourceError):
     """The file is not the XBRL we expect. Callers report it; they never fill the gap."""
 
 
+class ExceptionalUnclear(XbrlError):
+    """A nonzero exceptional-items line that the profit lines do not confirm."""
+
+
 @dataclass(frozen=True)
 class XbrlFact:
     concept: str
@@ -92,6 +102,30 @@ class XbrlFiling:
         return out
 
     # -- one period ---------------------------------------------------------------------
+
+    def exceptional_loss_cr(self, period: Period) -> float | None:
+        """Exceptional items of the period in Rs crore, a loss positive and a gain negative.
+
+        None when the filing has no exceptional-items line. Raises ExceptionalUnclear when the
+        line is nonzero and cannot be tied to the profit lines (no sign, or amounts that differ).
+        """
+        line = self.get("ExceptionalItemsBeforeTax", period)
+        if line is None:
+            return None
+        if line.value == 0:
+            return 0.0
+        before = self.get("ProfitBeforeExceptionalItemsAndTax", period)
+        after = self.get("ProfitBeforeTax", period)
+        if before is None or after is None:
+            raise ExceptionalUnclear(f"{period.label}: no profit lines to read the sign from")
+        loss = before.value - after.value  # rupees; positive when exceptional items cost profit
+        slack = sum(0.5 * 10 ** -int(x.decimals or 0) for x in (line, before, after))
+        if abs(abs(loss) - abs(line.value)) > slack:
+            raise ExceptionalUnclear(
+                f"{period.label}: exceptional line {line.value:,.0f} but profit lines differ by "
+                f"{loss:,.0f}"
+            )
+        return to_crore(loss, line.unit)
 
     def _fact(self, symbol, metric, period, xf: XbrlFact) -> Fact:
         return Fact(
@@ -137,6 +171,21 @@ class XbrlFiling:
             if xf is not None:
                 facts.append(self._fact(symbol, metric, period, xf))
 
+        flag: bool | None = None
+        if self.kind == "indas":
+            try:
+                loss = self.exceptional_loss_cr(period)
+            except ExceptionalUnclear as exc:
+                self.skipped.append(f"ebitda {exc}")
+                log.warning("%s: %s; ebitda left out", symbol, exc)
+                loss, flag = None, True
+            else:
+                flag = None if loss is None else loss != 0
+                if loss is not None:
+                    ebitda = self._ebitda(symbol, period, loss)
+                    if ebitda is not None:
+                        facts.append(ebitda)
+
         if self.kind == "bank":
             earned, spent = self.get("InterestEarned", period), self.get("InterestExpended", period)
             if earned and spent:
@@ -176,7 +225,40 @@ class XbrlFiling:
                         "ppop = pbt_before_exceptional + impairment",
                     )
                 )
+        if flag is not None:
+            facts = [f.model_copy(update={"has_exceptional_items": flag}) for f in facts]
         return facts
+
+    def _ebitda(self, symbol: str, period: Period, loss_cr: float) -> Fact | None:
+        """pbt + exceptional added back + finance costs + D&A - other income, in code."""
+        parts = []
+        for name in ("pbt", "finance_costs", "d_and_a", "other_income"):
+            xf = next((f for c in INDAS_METRICS[name] if (f := self.get(c, period))), None)
+            if xf is None:
+                return None
+            parts.append(xf)
+        line = self.get("ExceptionalItemsBeforeTax", period)
+        pbt, fin, dna, oth = (to_crore(p.value, p.unit) for p in parts)
+        value = round(pbt + loss_cr + fin + dna - oth, 6)
+        quoted = [parts[0], line, *parts[1:]]
+        return Fact(
+            ticker=symbol,
+            metric="ebitda",
+            value_cr=value,
+            unit_original=parts[0].unit,
+            period=period.label,
+            period_kind=period.kind,
+            basis=self.basis,
+            derived=True,
+            formula=(
+                "ebitda = pbt + exceptional_items_added_back + finance_costs + d_and_a - "
+                f"other_income = {pbt:,.2f} + {loss_cr:,.2f} + {fin:,.2f} + {dna:,.2f} - "
+                f"{oth:,.2f} = {value:,.2f}"
+            ),
+            source_url=self.source_url,
+            quote=" | ".join(q.raw for q in quoted),
+            quote_match=min(quote_match(q.raw, self.text) for q in quoted),
+        )
 
 
 def _decimal(text: str, concept: str) -> float:
