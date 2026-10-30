@@ -1,10 +1,12 @@
 """Materiality score, per config/materiality.yaml.
 
-    score = weight(category[.tier]) x holding factor (0.8-1.2) x recency (+ 15 if a price or volume
-    rule fired the same day)
+    score = weight(category[.tier]) x holding factor (0.8-1.2) (+ 15 if a price or volume rule fired
+    the same day)
 
-60 or more is a card, 30-59 a one-liner, below 30 the routine drawer. Pure functions: the clock
-and the price/volume flag are arguments, so a score can be reproduced from the stored parts.
+60 or more is a card, 30-59 a one-liner, below 30 the routine drawer. Status comes from this score
+alone: how important a filing is does not fade with age. Recency (1.0 falling to a floor over 24 h)
+only orders filings inside a status group, through `rank` = score x recency. Pure functions: the
+clock and the price/volume flag are arguments, so a score can be reproduced from the stored parts.
 """
 
 from __future__ import annotations
@@ -25,24 +27,29 @@ class MaterialityError(ValueError):
 
 @dataclass(frozen=True)
 class Score:
-    score: float
+    score: float  # weight x holding + bonus: decides card / one-liner / drawer
     weight: float
     holding: float
-    recency: float
+    recency: float  # 1.0 .. floor; orders filings inside a status group, never changes the status
     bonus: float
     key: str  # the weights key used, e.g. management_change.cxo
 
+    @property
+    def rank(self) -> float:
+        """Sort key inside a status group: importance x recency."""
+        return round(self.score * self.recency, 4)
+
     def parts(self) -> dict:
-        return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in asdict(self).items()}
+        parts = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in asdict(self).items()}
+        parts["rank"] = self.rank
+        return parts
 
     def why_template(self) -> str:
         """A plain-code 'why ranked' line: the same numbers, no model."""
-        text = (
-            f"{self.key} {self.weight:g} x holding {self.holding:.2f} x recency {self.recency:.2f}"
-        )
+        text = f"{self.key} {self.weight:g} x holding {self.holding:.2f}"
         if self.bonus:
             text += f" + {self.bonus:g} price/volume"
-        return f"{text} = {self.score:.0f}"
+        return f"{text} = {self.score:.0f}; recency {self.recency:.2f} sets the order"
 
 
 def load_materiality(path: Path | None = None) -> dict:
@@ -107,7 +114,7 @@ def score_filing(
     recency = recency_factor(filed_at, now, cfg)
     bonus = float(cfg["price_volume_bonus"]) if price_volume_fired else 0.0
     return Score(
-        round(weight * holding * recency + bonus, 4),
+        round(weight * holding + bonus, 4),
         weight,
         holding,
         recency,

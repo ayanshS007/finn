@@ -17,7 +17,7 @@ NOW = datetime(2026, 10, 30, 12, 0, tzinfo=IST)
 
 # The weights the product owner specified. The YAML must match this table exactly.
 SPEC = {
-    "results": 90,
+    "results.filed": 90,
     "litigation.insolvency": 90,
     "management_change.cxo": 85,
     "M&A": 80,
@@ -36,6 +36,7 @@ SPEC = {
     "pledging.release": 30,
     "dividend": 25,
     "earnings_call.notice": 15,
+    "results.notice": 15,
     "management_change.other_kmp": 10,
     "credit_rating.reaffirmed": 10,
     "postal_ballot": 10,
@@ -68,15 +69,28 @@ def test_a_tiered_category_without_a_tier_cannot_be_scored():
         weight_for("dividend", "cxo")
 
 
-def test_score_is_weight_times_holding_times_recency_plus_bonus():
+def test_score_is_weight_times_holding_plus_bonus_with_no_recency_decay():
     s = score_filing("management_change", "cxo", "INFY", NOW - timedelta(hours=12), NOW,
                      holdings={"INFY": 20, "ITC": 10})  # fmt: skip
-    # INFY is the largest holding: 1.2; 12 h of 24 h with a floor of 0.5: 0.75
+    # INFY is the largest holding: 1.2. 12 h of 24 h with a floor of 0.5 gives recency 0.75, which
+    # is kept for ordering but is not in the score.
     assert (s.weight, s.holding, s.recency) == (85, 1.2, 0.75)
-    assert s.score == pytest.approx(85 * 1.2 * 0.75)
+    assert s.score == pytest.approx(85 * 1.2)
+    assert s.rank == pytest.approx(85 * 1.2 * 0.75)
     with_bonus = score_filing("management_change", "cxo", "INFY", NOW - timedelta(hours=12), NOW,
                               price_volume_fired=True, holdings={"INFY": 20, "ITC": 10})  # fmt: skip
-    assert with_bonus.score == pytest.approx(85 * 1.2 * 0.75 + 15) and with_bonus.bonus == 15
+    assert with_bonus.score == pytest.approx(85 * 1.2 + 15) and with_bonus.bonus == 15
+    assert with_bonus.parts()["rank"] == pytest.approx((85 * 1.2 + 15) * 0.75, abs=1e-3)
+
+
+def test_age_never_changes_the_status_only_the_rank():
+    fresh = score_filing("results", "filed", "ITC", NOW, NOW, holdings={})
+    old = score_filing("results", "filed", "ITC", NOW - timedelta(days=30), NOW, holdings={})
+    assert status_for(fresh.score) == status_for(old.score) == "card"
+    assert fresh.score == old.score == 90 and old.recency == 0.5
+    assert fresh.rank > old.rank  # recency orders inside the group
+    mid = score_filing("management_change", "cxo", "ITC", NOW, NOW, holdings={})
+    assert mid.rank < fresh.rank < 90.01 and old.rank == 45
 
 
 def test_fresh_filings_clear_the_thresholds_as_specified():
@@ -85,13 +99,15 @@ def test_fresh_filings_clear_the_thresholds_as_specified():
                          price_volume_fired=fired, holdings={})  # fmt: skip
         return status_for(s.score)
 
-    assert status("results") == "card"
+    assert status("results", "filed") == "card"
+    assert status("results", "notice") == "drawer"  # 15
     assert status("litigation", "regulatory") == "card"  # exactly 60
     assert status("capex") == "oneliner"
     assert status("dividend") == "drawer"  # 25
     assert status("dividend", fired=True) == "oneliner"  # 25 + 15 = 40
     assert status("investor_meetings", fired=True) == "drawer"
-    assert status("results", hours=48) == "oneliner"  # 90 x 0.5 = 45: old news is not a card
+    assert status("results", "filed", hours=48) == "card"  # importance does not fade with age
+    assert status("press_release", hours=500) == "oneliner"  # exactly 30
 
 
 def test_status_boundaries_are_inclusive_at_60_and_30():
@@ -118,5 +134,7 @@ def test_recency_decays_over_24_hours_to_the_floor():
 
 
 def test_why_template_is_plain_code_with_the_same_numbers():
-    s = score_filing("results", None, "ITC", NOW, NOW, price_volume_fired=True, holdings={})
-    assert s.why_template() == "results 90 x holding 1.00 x recency 1.00 + 15 price/volume = 105"
+    s = score_filing("results", "filed", "ITC", NOW, NOW, price_volume_fired=True, holdings={})
+    assert s.why_template() == (
+        "results.filed 90 x holding 1.00 + 15 price/volume = 105; recency 1.00 sets the order"
+    )

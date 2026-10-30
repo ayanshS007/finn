@@ -1,11 +1,12 @@
-# Materiality: score = weight x holding factor x recency, plus a bonus when a price or volume rule
-# fired the same day (finn/score/materiality.py). 60 or more is a card, 30-59 a one-liner, below 30
-# goes to the routine drawer.
+# Materiality: score = weight x holding factor, plus a bonus when a price or volume rule fired the
+# same day (finn/score/materiality.py). 60 or more is a card, 30-59 a one-liner, below 30 goes to the
+# routine drawer. The score has NO recency decay: how important a filing is does not fade with age.
+# Recency only orders filings inside a status group (rank = score x recency).
 #
 # Keys are "category" or "category.tier". A tiered category must have a tier before it can be
 # scored, so there is no weight for a bare tiered category.
 weights:
-  results: 90
+  results.filed: 90
   litigation.insolvency: 90
   management_change.cxo: 85
   M&A: 80
@@ -24,6 +25,7 @@ weights:
   pledging.release: 30
   dividend: 25
   earnings_call.notice: 15
+  results.notice: 15
   management_change.other_kmp: 10
   credit_rating.reaffirmed: 10
   postal_ballot: 10
@@ -39,7 +41,8 @@ holding:
   default: 1.0
 
 # Recency: 1.0 for a filing just made, falling linearly to `floor` after `window_hours`, then flat.
-# The floor keeps a 3-day-old result from vanishing in a backfill; it still drops below a card.
+# It sets the sort order inside card / one-liner / drawer and never moves a filing between them; the
+# floor keeps an old filing from sinking to the bottom of its group.
 recency:
   window_hours: 24
   floor: 0.5

@@ -199,6 +199,7 @@ def test_an_nclat_update_filed_under_the_insolvency_category_is_not_labelled_ins
         ),
         ("Financial Results", "Integrated filing", "results"),
         ("Result | Financial Results", "Financial results", "results"),
+        ("Integrated Filing- Financials", "Integrated filing", "results"),
         (
             "General Updates",
             "X has informed the Exchange about the financial results for the quarter and half year ended 30th September 2026.",
@@ -299,8 +300,8 @@ def test_earnings_call_transcript_and_notice_tiers():
             "insider_fair_disclosure_code",
         ),
         (
-            "Analysts/Institutional Investor Meet/Con. Call Updates",
-            "The meeting of the Board of Directors of the Company is scheduled on October 30, 2026, inter alia, to consider and approve the unaudited financial results",
+            "General Updates",
+            "The meeting of the Board of Directors of the Company is scheduled on October 30, 2026, inter alia, to consider raising of funds by way of non-convertible debentures",
             "board_meeting_intimation",
         ),
     ],
@@ -369,3 +370,96 @@ def test_is_valid_wants_a_tier_exactly_when_the_category_has_tiers():
         cats.tier_index("management_change", "other_kmp") == 3
         and cats.tier_index("dividend", None) is None
     )
+
+
+# -- results: filed vs notice ----------------------------------------------------------------------
+
+RELIANCE_BOARD_NOTICE = (
+    "The meeting of the Board of Directors of the Company is scheduled on October 30, 2026, inter "
+    "alia, to consider and approve a. the standalone and consolidated unaudited financial results "
+    "of the Company for the quarter and half year ended September 30, 2026; and b. raising of "
+    "funds by way of issuance of listed, secured / unsecured, redeemable non-convertible "
+    "debentures on private placement basis, in one or more tranches. The Company will hold an "
+    "analyst meet, post the Board Meeting, to discuss the financial results for the quarter and "
+    "half year ended September 30, 2026."
+)
+RELIANCE_JIO = (
+    "Trading in equity shares of Jio Platforms Limited (JPL) will commence from October 28, "
+    "2026.Further, a meeting of board of directors of JPL is scheduled to be held on Friday, "
+    "October 30, 2026, inter alia, to consider and approve the standalone and consolidated "
+    "unaudited financial results of JPL for the quarter and half year ended September 30, 2026."
+)
+
+
+@pytest.mark.parametrize(
+    "category, subject, expected",
+    [
+        # filed: the integrated filing, an outcome that states the results, or text that does
+        ("Integrated Filing- Financials", "Integrated filing", "filed"),
+        ("Financial Results", "Integrated filing", "filed"),
+        (
+            "Outcome of Board Meeting",
+            "X has submitted to the Exchange, the financial results for the period ended September 30, 2026.",
+            "filed",
+        ),
+        (
+            "Outcome of Board Meeting",
+            "Board meeting held today to consider and approve the unaudited financial results for the quarter ended September 30, 2026",
+            "filed",
+        ),
+        (
+            "General Updates",
+            "X has informed the Exchange about the financial results for the quarter and half year ended September 30, 2026.",
+            "filed",
+        ),
+        # notice: intimations of a meeting, in whatever category the exchange filed them under
+        ("Analysts/Institutional Investor Meet/Con. Call Updates", RELIANCE_BOARD_NOTICE, "notice"),
+        ("General Updates", RELIANCE_JIO, "notice"),  # the Reliance / Jio Platforms case
+        (
+            "Board Meeting",
+            "X has informed the Exchange about Board Meeting Intimation for Financial Results",
+            "notice",
+        ),
+        (
+            "Board Meeting",
+            "Prior intimation of board meeting to consider the unaudited results for the quarter ended September 30, 2026",
+            "notice",
+        ),
+    ],
+)
+def test_results_are_filed_or_notice(category, subject, expected):
+    r = label(category, subject)
+    assert (r.category, r.tier) == ("results", expected), r.rule
+
+
+def test_the_reliance_jio_filing_is_a_results_notice_by_rule_with_no_model():
+    r = label("General Updates", RELIANCE_JIO)
+    assert r.rule == "results_notice_board_meeting" and not r.needs_tier and not r.llm_review
+
+
+def test_a_board_meeting_notice_that_does_not_mention_results_stays_routine():
+    r = label("General Updates", "A meeting of the Board of Directors is scheduled on October 30, 2026 to consider fund raising")  # fmt: skip
+    assert (r.category, r.rule) == ("unclassified", "board_meeting_intimation")
+
+
+def test_an_earnings_call_notice_is_not_a_results_notice():
+    r = label(
+        "Analysts/Institutional Investor Meet/Con. Call Updates",
+        "Earnings call to discuss the financial results for the quarter ended September 30, 2026 is scheduled on October 31",
+    )
+    assert (r.category, r.tier) == ("earnings_call", "notice")
+
+
+def test_an_outcome_is_never_a_notice_even_when_it_says_to_consider():
+    r = label("Outcome of Board Meeting", "The Board at its meeting held today, to consider the unaudited financial results for the quarter ended September 30, 2026, approved them")  # fmt: skip
+    assert (r.category, r.tier) == ("results", "filed")
+
+
+def test_results_tiers_and_weights():
+    cats = load_categories()
+    assert list(cats.tiers["results"]) == ["filed", "notice"]
+    weights = default_config()["weights"]
+    assert (weights["results.filed"], weights["results.notice"]) == (90, 15)
+    assert "results" not in weights  # a bare results has no weight: a tier is required
+    assert cats.is_valid("results", "filed") and not cats.is_valid("results", None)
+    assert cats.tier_index("results", "filed") == 1 and cats.tier_index("results", "notice") == 2

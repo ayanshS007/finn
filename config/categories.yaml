@@ -5,7 +5,8 @@
 #   * The text matched is the exchange category and subcategory joined as "category | subcategory"
 #     (`category_raw`) and the announcement text (`subject`). All regexes are case-insensitive;
 #     `(?-i:...)` switches that off for short acronyms such as CFO.
-#   * A rule matches when every pattern it gives matches. `not_category_raw` vetoes a match.
+#   * A rule matches when every pattern it gives matches. `not_category_raw` and `not_subject` veto a
+#     match.
 #   * Rules are tried by `priority` (lower first), then in file order, across ALL categories. The
 #     first match wins and is returned with its name, so every label can be traced to a rule.
 #   * `tier: null` on a rule means the category is certain but the tier is not: the filing goes to the
@@ -26,25 +27,49 @@ macros:
   mgmt_verb: 'appoint|re-?appoint|resign|cessation|cease|retire|demise|death|relinquish|removal|vacat|step(?:s|ping)? down|change in'
   mgmt_category: 'change in (?:director|management)|appointment|resignation|retirement|cessation|re-?appointment|directorate'
   rating_word: 'rating|outlook'
+  # wording of a meeting that has not happened yet, and of one that has (or of results that are in)
+  notice_words: 'scheduled|to be held|will be held|will consider|to consider|proposed to|board meeting intimation|intimation of (?:the )?(?:date of )?board meeting|prior intimation|ensuing board meeting'
+  done_words: '(?<!be )\bheld (?:today|on)\b|\bapproved\b|\btook on record\b|\btaken on record\b|\bsubmitted\b'
 
 categories:
   results:
-    # An LLM label of `results` is rejected when its quote reads as a notice of a future meeting
-    # (the small model otherwise labels "board meeting will consider results" as results).
-    quote_veto: '\bto consider\b|\bwill consider\b|\bscheduled\b|\bwill be held\b|\bintimation\b'
-    definition: 'The company filed its quarterly, half-yearly or annual financial results, or the board meeting outcome that approves them; a notice that a meeting will consider results is not results.'
+    definition: 'The company filed, or gave notice of, its quarterly, half-yearly or annual financial results.'
+    tiers:
+      filed: 'The filing carries financial results for a period that has ended: the integrated filing with its XBRL, or the board meeting outcome or letter that states them.'
+      notice: 'A notice only: a board-meeting intimation, or text saying a meeting is scheduled to or will consider results. No results yet.'
+    # The LLM labeller picks the tier; code then checks it (finn/classify/llm_label.py). A `filed`
+    # label whose quote reads as a notice (notice_quote, and none of done_quote) is moved to
+    # `notice`, which is what it is; a `filed` label with no results-for-a-period wording anywhere
+    # in the subject or attachment text (filed_evidence) fails the check and goes to the drawer.
+    notice_quote: '<<notice_words>>'
+    done_quote: '<<done_words>>'
+    filed_evidence: '(?:quarter|half[- ]year|nine months|year|period)(?:ly)? ended|for the (?:quarter|half|year|period|nine)'
     rules:
+      # A board-meeting intimation, or any text saying a meeting is scheduled to consider results,
+      # is a notice. Checked before the routine board-meeting rule (priority 3) and before every
+      # `filed` rule, so a notice can never be taken for results.
+      - name: results_notice_board_meeting
+        priority: 2
+        subject: '(?s)^(?=.*\bresults?\b)(?=.*(?:<<notice_words>>))'
+        not_subject: '<<done_words>>|(?:earnings|conference) call'
+        not_category_raw: 'outcome of board meeting|^financial results?|^integrated filing|^result\b'
+        tier: notice
+      # The integrated filing itself: it is the XBRL (NSE hasXbrl is true on nearly every filing, so
+      # it cannot be the signal).
       - name: results_filing_category
         priority: 10
         category_raw: '^(?:financial results?|integrated filing.{0,4} financials?|result)\b'
+        tier: filed
       - name: results_outcome_of_board_meeting
         priority: 10
         category_raw: 'outcome of board meeting|board meeting'
         subject: 'financial results?|unaudited|(?:audited|standalone|consolidated) (?:financial|results)|(?:quarter|half[- ]year|nine months|year|period)(?:ly)? ended'
+        tier: filed
       - name: results_named_in_text
         priority: 10
         subject: 'financial results? for the (?:quarter|half|year|period|nine)'
         not_category_raw: 'press|newspaper|presentation|transcript|investor|analyst|dividend|record date|board meeting'
+        tier: filed
 
   litigation:
     definition: 'A court, tribunal, regulator or creditor action against or involving the company: insolvency proceedings, or orders, penalties and notices from SEBI, RBI, tax or other authorities.'

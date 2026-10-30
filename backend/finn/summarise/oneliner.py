@@ -91,8 +91,8 @@ def one_liner_prompt(subject, category, tier, figures, nudge="") -> str:
 def why_line_prompt(subject, category, tier, parts, figures, nudge="") -> str:
     facts = (
         f"base weight {parts['weight']:g}; holding factor {parts['holding']:.2f}; "
-        f"recency factor {parts['recency']:.2f}; price/volume bonus {parts['bonus']:g}; "
-        f"score {parts['score']:.0f}"
+        f"price/volume bonus {parts['bonus']:g}; score {parts['score']:.0f} "
+        f"(recency factor {parts['recency']:.2f} only orders the list)"
     )
     return (
         "Write one plain sentence of at most 25 words saying why this stock exchange filing ranks "
