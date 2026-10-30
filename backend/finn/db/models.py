@@ -52,7 +52,6 @@ ClaimMetric = Literal[
     "text",
 ]
 UnitOriginal = Literal["lakh", "crore", "million", "rupee"]
-# H2 is not in the CLAUDE.md contract but is needed for the required H2 = FY - H1 derivation.
 PeriodKind = Literal["Q", "H1", "H2", "9M", "FY"]
 Basis = Literal["consolidated", "standalone"]
 TargetUnit = Literal["%", "cr", "units", "text"]
@@ -82,6 +81,9 @@ class Fact(BaseModel):
     page: int | None = None
     quote: str
     quote_match: float
+    # True/False when the source reports an exceptional-items line for the period (True = nonzero);
+    # None when it does not (screener nets them into other income). EBITDA always excludes them.
+    has_exceptional_items: bool | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> Fact:
@@ -132,7 +134,7 @@ class Verdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     claim_id: str
-    actual_fact_id: str | None  # null only when abstaining (or when the claim went quiet)
+    actual_fact_id: str | None  # null only when abstaining (not_enough_evidence) or went_quiet
     verdict: VerdictLabel
     reason: str  # max 20 words, no new numbers
 

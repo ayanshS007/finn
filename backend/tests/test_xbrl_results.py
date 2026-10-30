@@ -51,7 +51,10 @@ def test_indas_fixture(fixtures, name, kind, expected):
     assert (filing.basis, filing.kind) == ("consolidated", kind)
     assert [p.label for p in filing.periods] == ["FY27H1", "FY27Q2"]  # quarter and year to date
     assert {m: round(q[m].value_cr, 2) for m in expected} == pytest.approx(expected)
-    assert all(f.derived is False and f.unit_original == "rupee" for f in q.values())
+    assert all(f.unit_original == "rupee" for f in q.values())
+    assert {m for m, f in q.items() if f.derived} == {"ebitda"}  # the only line computed here
+    assert q["ebitda"].has_exceptional_items is False  # both filings report a zero line
+    assert all(f.has_exceptional_items is False for f in q.values())
     assert all(f.period == "FY27Q2" and f.basis == "consolidated" for f in q.values())
     assert all(f.source_url == URL.format(name) for f in q.values())
     assert arithmetic_ok(q["pbt"].value_cr, q["tax"].value_cr, q["pat"].value_cr)
@@ -196,3 +199,86 @@ def test_fetch_xbrl_returns_the_document_and_rejects_block_pages(tmp_path):
             client(tmp_path, b"<html><body>Access Denied</body></html>"),
             ttl=0,
         )
+
+
+# -- exceptional items: EBITDA excludes them -------------------------------------------------
+
+
+def exceptional_filing(before, exceptional, after, **extra):
+    """One quarter: other income 50, finance costs 20, D&A 100 (Rs crore x 1e7 = rupees)."""
+    cr = 10_000_000
+    facts = [
+        ("RevenueFromOperations", "OneD", 5000 * cr),
+        ("OtherIncome", "OneD", 50 * cr),
+        ("FinanceCosts", "OneD", 20 * cr),
+        ("DepreciationDepletionAndAmortisationExpense", "OneD", 100 * cr),
+        ("ProfitBeforeExceptionalItemsAndTax", "OneD", before * cr),
+        ("ExceptionalItemsBeforeTax", "OneD", exceptional * cr),
+        ("ProfitBeforeTax", "OneD", after * cr),
+    ]
+    return parse_xbrl(make_xbrl("consolidated", CTX, facts, **extra), "u://x").to_facts("T")
+
+
+@pytest.mark.parametrize(
+    "before, line, after, added_back",
+    [
+        (1000, 80, 920, 80),  # a loss of 80, filed as a positive expense
+        (1000, -80, 920, 80),  # the same loss for a filer who signs the line the other way
+        (1000, 60, 1060, -60),  # a gain of 60, filed as a positive income
+        (1000, -60, 1060, -60),  # the same gain, signed the other way
+    ],
+)
+def test_ebitda_adds_back_a_loss_and_subtracts_a_gain(before, line, after, added_back):
+    facts = {f.metric: f for f in exceptional_filing(before, line, after) if f.period_kind == "Q"}
+    e = facts["ebitda"]
+    # operating profit before exceptional items: 1000 + 20 + 100 - 50 = 1,070 either way
+    assert e.value_cr == pytest.approx(1070.0)
+    assert e.value_cr == pytest.approx(facts["pbt"].value_cr + added_back + 20 + 100 - 50)
+    assert e.derived and e.has_exceptional_items is True
+    assert e.formula == (
+        "ebitda = pbt + exceptional_items_added_back + finance_costs + d_and_a - other_income = "
+        f"{after:,.2f} + {added_back:,.2f} + 20.00 + 100.00 - 50.00 = 1,070.00"
+    )
+    assert "ExceptionalItemsBeforeTax" in e.quote and e.quote_match == 1.0
+    assert all(f.has_exceptional_items is True for f in facts.values())  # every fact is flagged
+
+
+def test_zero_exceptional_line_is_flagged_false_and_keeps_the_plain_value():
+    facts = {f.metric: f for f in exceptional_filing(1000, 0, 1000)}
+    assert facts["ebitda"].value_cr == pytest.approx(1070.0)
+    assert facts["ebitda"].has_exceptional_items is False
+    assert "+ 0.00 +" in facts["ebitda"].formula
+
+
+def test_filing_without_the_line_has_no_flag():
+    facts = [
+        ("OtherIncome", "OneD", 5 * 10**7),
+        ("FinanceCosts", "OneD", 2 * 10**7),
+        ("DepreciationDepletionAndAmortisationExpense", "OneD", 10**8),
+        ("ProfitBeforeTax", "OneD", 10**9),
+    ]
+    got = parse_xbrl(make_xbrl("consolidated", CTX, facts), "u://x").to_facts("T")
+    assert all(f.has_exceptional_items is None for f in got)
+    assert all(f.metric != "ebitda" for f in got)  # the line is needed to say it is excluded
+
+
+def test_exceptional_line_that_the_profit_lines_do_not_confirm_leaves_ebitda_out():
+    filing = parse_xbrl(
+        make_xbrl(
+            "consolidated",
+            CTX,
+            [
+                ("RevenueFromOperations", "OneD", 5000 * 10**7),
+                ("OtherIncome", "OneD", 50 * 10**7),
+                ("FinanceCosts", "OneD", 20 * 10**7),
+                ("DepreciationDepletionAndAmortisationExpense", "OneD", 100 * 10**7),
+                ("ProfitBeforeExceptionalItemsAndTax", "OneD", 1000 * 10**7),
+                ("ExceptionalItemsBeforeTax", "OneD", 80 * 10**7),
+                ("ProfitBeforeTax", "OneD", 990 * 10**7),  # a gap of 10, not 80
+            ],
+        ),
+        "u://x",
+    )
+    got = {f.metric: f for f in filing.to_facts("T")}
+    assert "ebitda" not in got and got["pbt"].has_exceptional_items is True
+    assert filing.skipped and "exceptional" in filing.skipped[0]

@@ -248,7 +248,13 @@ def _derive(whole: Fact, part: Fact, *, kind: str, target: str, rule: str) -> Fa
         page=None,
         quote=f"{whole.quote} | {part.quote}",
         quote_match=min(whole.quote_match, part.quote_match),
+        has_exceptional_items=_either(whole.has_exceptional_items, part.has_exceptional_items),
     )
+
+
+def _either(a: bool | None, b: bool | None) -> bool | None:
+    """Conservative flag for a difference: it may hold exceptional items if either input did."""
+    return None if a is None and b is None else bool(a) or bool(b)
 
 
 def derive_q4(fy: Fact, nine_m: Fact) -> Fact:

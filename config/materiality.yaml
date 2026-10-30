@@ -1,1 +1,52 @@
-# Category weights for the materiality score. Stub: filled in by a later segment.
+# Materiality: score = weight x holding factor x recency, plus a bonus when a price or volume rule
+# fired the same day (finn/score/materiality.py). 60 or more is a card, 30-59 a one-liner, below 30
+# goes to the routine drawer.
+#
+# Keys are "category" or "category.tier". A tiered category must have a tier before it can be
+# scored, so there is no weight for a bare tiered category.
+weights:
+  results: 90
+  litigation.insolvency: 90
+  management_change.cxo: 85
+  M&A: 80
+  fund_raise.equity: 70
+  credit_rating.downgrade: 70
+  pledging.increase: 70
+  litigation.regulatory: 60
+  capex: 55
+  credit_rating.upgrade: 50
+  insider_trading: 50
+  management_change.director: 40
+  bonus_split: 40
+  earnings_call.transcript: 35
+  press_release: 30
+  fund_raise.debt: 30
+  pledging.release: 30
+  dividend: 25
+  earnings_call.notice: 15
+  management_change.other_kmp: 10
+  credit_rating.reaffirmed: 10
+  postal_ballot: 10
+  agm_egm: 10
+  investor_meetings: 5
+  unclassified: 0
+
+# Holding factor: from the optional `weights` map in config/portfolio.yaml, scaled linearly so the
+# smallest holding gets `min` and the largest `max`. A ticker with no weight gets `default`.
+holding:
+  min: 0.8
+  max: 1.2
+  default: 1.0
+
+# Recency: 1.0 for a filing just made, falling linearly to `floor` after `window_hours`, then flat.
+# The floor keeps a 3-day-old result from vanishing in a backfill; it still drops below a card.
+recency:
+  window_hours: 24
+  floor: 0.5
+
+# Added when a price or volume rule fired for the same ticker on the same IST day.
+price_volume_bonus: 15
+
+thresholds:
+  card: 60
+  oneliner: 30

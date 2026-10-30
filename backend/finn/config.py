@@ -22,3 +22,9 @@ def load_portfolio(path: Path | None = None) -> dict:
 
 def portfolio_symbols(path: Path | None = None) -> list[str]:
     return list(load_portfolio(path)["portfolio"])
+
+
+def portfolio_names(path: Path | None = None) -> dict[str, str]:
+    """Company name (as the exchange prints it) -> symbol, for sources that carry no symbol."""
+    names = load_portfolio(path).get("company_names") or {}
+    return {name: symbol for symbol, name in names.items()}

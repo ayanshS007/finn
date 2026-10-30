@@ -203,6 +203,9 @@ def _legacy_row_facts(symbol: str, period: Period, row: dict, bank: bool) -> lis
     source = json.dumps(row)
     out: list[Fact] = []
 
+    exceptional = row.get("re_excepn_items_new")
+    flag = None if exceptional in (None, "", "-") else float(exceptional) != 0
+
     def add(metric: str, lakh: float, quote: str, **extra) -> None:
         out.append(
             Fact(
@@ -216,6 +219,7 @@ def _legacy_row_facts(symbol: str, period: Period, row: dict, bank: bool) -> lis
                 source_url=LEGACY_URL.format(symbol),
                 quote=quote,
                 quote_match=quote_match(quote, source),
+                has_exceptional_items=flag,
                 **extra,
             )
         )
@@ -257,7 +261,14 @@ def _legacy_quarter(symbol: str, end: date, payload: dict) -> list[Fact]:
 
 
 def add_ebitda(facts: list[Fact]) -> list[Fact]:
-    """ebitda = pbt + finance_costs + d_and_a - other_income, per period and basis (not lenders)."""
+    """Fallback EBITDA for periods whose source has no XBRL (screener, legacy NSE), not lenders.
+
+    ebitda = pbt + finance_costs + d_and_a - other_income. These sources carry no exceptional-items
+    line to add back: screener nets exceptional items into other income, so the formula already
+    excludes them; the legacy payload reports the line, and a period where it is nonzero gets no
+    EBITDA rather than one with exceptional items in it. XBRL periods already hold their own
+    EBITDA (with the exceptional line, see finn.parse.xbrl_results) and are skipped.
+    """
     out = list(facts)
     groups: dict[tuple, dict[str, Fact]] = {}
     for f in facts:
@@ -268,6 +279,9 @@ def add_ebitda(facts: list[Fact]) -> list[Fact]:
             continue
         parts = [by[m] for m in need]
         if any(p.value_cr is None for p in parts):
+            continue
+        if by["pbt"].has_exceptional_items:  # exceptional items inside pbt and no sign to remove
+            log.warning("%s %s: exceptional items in pbt; ebitda left out", ticker, period)
             continue
         pbt, fin, dna, oi = (p.value_cr for p in parts)
         value = round(pbt + fin + dna - oi, 6)
@@ -287,6 +301,7 @@ def add_ebitda(facts: list[Fact]) -> list[Fact]:
                 source_url=by["pbt"].source_url,
                 quote=" | ".join(p.quote for p in parts),
                 quote_match=min(p.quote_match for p in parts),
+                has_exceptional_items=by["pbt"].has_exceptional_items,
             )
         )
     return out

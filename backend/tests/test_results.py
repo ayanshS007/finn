@@ -104,11 +104,12 @@ def test_ebitda_is_derived_in_code_with_its_formula():
         "INFY", client=FakeNSE(raw_of("INFY")), fetch=Fetcher(), screener_fetch=no_screener
     )
     e = by(facts)["FY27Q2", "ebitda"]
-    assert e.derived and e.value_cr == 11689.0  # 11063 + 115 + 1359 - 848
+    assert e.derived and e.value_cr == 11689.0  # 11063 + 0 + 115 + 1359 - 848
     assert e.formula == (
-        "ebitda = pbt + finance_costs + d_and_a - other_income = "
-        "11,063.00 + 115.00 + 1,359.00 - 848.00 = 11,689.00"
+        "ebitda = pbt + exceptional_items_added_back + finance_costs + d_and_a - other_income = "
+        "11,063.00 + 0.00 + 115.00 + 1,359.00 - 848.00 = 11,689.00"
     )
+    assert e.has_exceptional_items is False
     assert e.quote_match == 1.0 and e.basis == "consolidated"
     assert {"nii", "ppop"}.isdisjoint(m for _, m in by(facts))
 
@@ -369,3 +370,36 @@ def test_q4_without_a_december_filing_is_left_out():
         }
     )
     assert results._xbrl_quarter("T", date(2026, 3, 31), rows, "consolidated", lambda u: mar) == []
+
+
+def test_fallback_ebitda_is_skipped_when_exceptional_items_sit_inside_pbt():
+    def fact(metric, value, flag):
+        return results.Fact(
+            ticker="T",
+            metric=metric,
+            value_cr=value,
+            unit_original="lakh",
+            period="FY25Q3",
+            period_kind="Q",
+            basis="standalone",
+            source_url="u",
+            quote="q",
+            quote_match=1.0,
+            has_exceptional_items=flag,
+        )
+
+    def inputs(flag):
+        return [
+            fact(m, v, flag)
+            for m, v in (
+                ("pbt", 100.0),
+                ("finance_costs", 5.0),
+                ("d_and_a", 10.0),
+                ("other_income", 8.0),
+            )
+        ]
+
+    assert [f.metric for f in results.add_ebitda(inputs(True))].count("ebitda") == 0
+    plain = by(results.add_ebitda(inputs(False)))["FY25Q3", "ebitda"]
+    assert plain.value_cr == 107.0 and plain.has_exceptional_items is False
+    assert by(results.add_ebitda(inputs(None)))["FY25Q3", "ebitda"].has_exceptional_items is None
