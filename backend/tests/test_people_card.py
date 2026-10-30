@@ -295,3 +295,49 @@ def test_the_card_hands_the_why_line_the_names_roles_and_dates_it_checked():
         "Mr. Anup Bagchi joins": "MD & CEO, effective 2026-10-27",
         "Mr. Sashidhar Jagdishan leaves": "MD & CEO, effective 2026-10-26",
     }
+
+
+@pytest.mark.parametrize(
+    "url, name, ok",
+    [
+        ("https://in.linkedin.com/in/anup-bagchi-91a82a9", "Mr. Anup Bagchi", True),
+        ("https://in.linkedin.com/in/vadera-lily-6b784738", "Mrs. Lily Vadera", True),
+        ("https://in.linkedin.com/in/jigar-shah-669250197", "Jigar Shah", True),
+        ("https://in.linkedin.com/in/vinod-sp-82bb9145", "V. N. Srivatsan", False),
+        ("https://in.linkedin.com/in/anup-sharma-12", "Anup Bagchi", False),  # same first name only
+        ("https://www.linkedin.com/in/ab12", "Anup Bagchi", False),
+        ("https://www.linkedin.com/in/anup-bagchi", "", False),
+    ],
+)
+def test_a_profile_address_has_to_carry_the_persons_name(url, name, ok):
+    assert pc.slug_matches(url, name) is ok
+
+
+def test_the_first_hit_is_dropped_when_it_is_someone_else_and_the_second_is_not_tried():
+    transport = FakeTavily(results=[
+        {"url": "https://in.linkedin.com/in/anup-sharma-12"},
+        {"url": "https://in.linkedin.com/in/anup-bagchi-91a82a9"},
+    ])  # fmt: skip
+    store = MemoryStore()
+    t = tavily(transport, store)
+    assert t.linkedin("Mr. Anup Bagchi", "HDFC Bank Limited") == pc.LinkedIn(None, "none")
+    # the cached answer gets the same check
+    assert t.linkedin("Mr. Anup Bagchi", "HDFC Bank Limited") == pc.LinkedIn(None, "none", True)
+    assert len(transport.requests) == 1
+
+
+def test_a_person_named_twice_is_one_entry_with_the_other_role_listed():
+    additional = joiner(
+        role=field("Additional Director", "appointment of Mr. Anup Bagchi as an Additional Director"),
+        effective_date=field("October 2, 2026", "w.e.f. October 2, 2026"),
+        brief_profile={"value": None, "quote": None},
+    )
+    letter = LETTER + " appointment of Mr. Anup Bagchi as an Additional Director w.e.f. October 2, 2026."
+    router = ScriptedRouter([{"people": [additional, joiner(), leaver()]}])
+    deps = pc.Deps(router=router, tavily=tavily(FakeTavily()), pdf=lambda u, p=3: PdfText(u, letter, 2, "x"))  # fmt: skip
+    card = pc.build_people_card(ROW, "HDFC Bank Limited", deps)
+    names = [p["name"] for p in card.fragment["people"]]
+    assert names == ["Mr. Anup Bagchi", "Mr. Sashidhar Jagdishan"]
+    bagchi = card.fragment["people"][0]
+    assert bagchi["role"] == "MD & CEO" and bagchi["other_roles"] == ["Additional Director"]
+    assert bagchi["brief_profile"] == PROFILE  # the entry with the checked profile is kept

@@ -43,6 +43,7 @@ log = logging.getLogger(__name__)
 
 STEP = "results_pdf"
 PDF_PAGES = 8
+MAX_OUT = 2048
 CARD_METRICS = ("revenue", "ebitda", "pbt", "pat")
 LENDER_CARD_METRICS = ("revenue", "nii", "ppop", "pbt", "pat")
 
@@ -190,7 +191,8 @@ def facts_from_pdf(
     best: tuple[list[Fact], list[str]] = ([], ["no answer"])
     nudge = ""
     for _attempt in (1, 2):
-        table = router.call(STEP, "reader", _pdf_prompt(text, end, kind, nudge), PdfTable).data
+        prompt = _pdf_prompt(text, end, kind, nudge)
+        table = router.call(STEP, "reader", prompt, PdfTable, max_output_tokens=MAX_OUT).data
         facts, problems = _pdf_facts(symbol, period, url, text, kind, table)
         if len(facts) > len(best[0]) or not best[0]:
             best = (facts, problems)

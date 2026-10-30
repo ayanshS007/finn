@@ -10,9 +10,11 @@ Only the filing's own brief-profile text is shown: the card keeps the quote, cop
 and only when it matches the text at PROFILE_MATCH or better. The model's wording is never shown.
 Dates are parsed in code from the filing's own words.
 
-LinkedIn: one Tavily search "<name> <company> LinkedIn" per person who joins, cached so the same
-person is never searched twice; the first linkedin.com/in/ result is kept and nothing else. The
-profile itself is never fetched or scraped. The link is the first search hit, not a verified match.
+LinkedIn: one Tavily search "<name> <company> LinkedIn" per person who joins (not a re-appointment),
+cached so the same person is never searched twice; the first linkedin.com/in/ result is kept and
+nothing else. It is dropped if its address does not carry the person's name (the first hit for a
+common name is often someone else). The profile itself is never fetched or scraped, and a kept link
+is a search hit, not a verified match.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ log = logging.getLogger(__name__)
 
 STEP = "people"
 PDF_PAGES = 6
+MAX_OUT = 4096  # a copied profile is long; a cut-off reply is not valid JSON
 TEXT_CHARS = 14000
 PROFILE_MATCH = 0.8  # the shown profile text must be (nearly) word for word the filing's own
 FIELDS = ("name", "role", "change", "effective_date", "brief_profile")
@@ -81,8 +84,8 @@ def build_prompt(subject: str, text: str, nudge: str = "") -> str:
         "retire, finish a tenure or cease\n"
         "- effective_date: the date the change takes effect, as written in the text\n"
         "- brief_profile: only if the notice itself contains a brief profile of the person "
-        "(education, career), the quote is that profile copied word for word; value is the same "
-        "text. Never write a profile yourself.\n"
+        "(education, career): put that profile, copied word for word, in quote and leave value "
+        "null. Never write a profile yourself.\n"
         "Set both value and quote to null for a field the text does not give.\n\n"
         f"Subject: {subject}\n"
         f"Text:\n{text[:TEXT_CHARS]}\n\n"
@@ -100,6 +103,7 @@ class Person:
     effective_date: str | None = None  # ISO date, parsed in code from the filing's own words
     brief_profile: str | None = None  # the filing's own text, quoted
     evidence: dict[str, dict] = field(default_factory=dict)  # field -> {quote, quote_match}
+    other_roles: list[str] = field(default_factory=list)  # same person named under another role
     reappointment: bool = False  # the change quote says re-appointment: not a new face
     linkedin_url: str | None = None
     linkedin_state: str = "not_searched"  # found | none | pending | no_api_key | not_searched
@@ -110,6 +114,7 @@ class Person:
             "role": self.role,
             "change": self.change,
             "effective_date": self.effective_date,
+            "other_roles": self.other_roles,
             "reappointment": self.reappointment,
             "brief_profile": self.brief_profile,
             "linkedin_url": self.linkedin_url,
@@ -171,7 +176,8 @@ def extract_people(subject: str, text: str, router: Router) -> tuple[list[Person
     best: tuple[list[Person], list[str]] = ([], ["no answer"])
     nudge = ""
     for _attempt in (1, 2):
-        out = router.call(STEP, "lite", build_prompt(subject, text, nudge), PeopleOut).data
+        prompt = build_prompt(subject, text, nudge)
+        out = router.call(STEP, "lite", prompt, PeopleOut, max_output_tokens=MAX_OUT).data
         dropped: list[str] = []
         people = [p for raw in out.people if (p := _clean(raw, source, dropped))]
         if _score(people) > _score(best[0]) or not best[0]:
@@ -187,6 +193,23 @@ def extract_people(subject: str, text: str, router: Router) -> tuple[list[Person
 
 def _score(people: list[Person]) -> int:
     return sum(len(p.evidence) for p in people)
+
+
+def merge_same_person(people: list[Person]) -> list[Person]:
+    """One entry per person and change: a person named twice (Additional Director now, MD & CEO
+    from a later date) keeps the entry with more checked fields and lists the other role."""
+    out: dict[tuple, Person] = {}
+    for p in people:
+        key = (" ".join(re.split(r"[^a-z]+", HONORIFICS.sub("", p.name).lower())).strip(), p.change)
+        old = out.get(key)
+        if old is None:
+            out[key] = p
+            continue
+        keep, other = (p, old) if len(p.evidence) > len(old.evidence) else (old, p)
+        if other.role and other.role != keep.role:
+            keep.other_roles.append(other.role)
+        out[key] = keep
+    return list(out.values())
 
 
 # -- Tavily ----------------------------------------------------------------------------------
@@ -231,7 +254,7 @@ class Tavily:
         key = self.cache_key(query)
         hit = self.store.get(key)
         if hit is not None:
-            return LinkedIn(hit.get("url"), "found" if hit.get("url") else "none", True)
+            return self._answer(name, hit.get("url"), True)
         api_key = self.env.get("TAVILY_API_KEY")
         if not api_key:
             return LinkedIn(None, "no_api_key")
@@ -240,7 +263,13 @@ class Tavily:
             return LinkedIn(None, "pending")
         url = next((m.group(0) for r in results if (m := LINKEDIN.match(r.get("url") or ""))), None)
         self.store.put(key, {"query": query, "url": url, "results_seen": len(results)})
-        return LinkedIn(url, "found" if url else "none")
+        return self._answer(name, url, False)
+
+    @staticmethod
+    def _answer(name: str, url: str | None, cached: bool) -> LinkedIn:
+        if url and not slug_matches(url, name):
+            return LinkedIn(None, "none", cached)  # the first hit is not this person
+        return LinkedIn(url, "found" if url else "none", cached)
 
     def _search(self, query: str, api_key: str) -> list[dict] | None:
         body = {"query": query, "max_results": 5, "search_depth": "basic",
@@ -265,6 +294,18 @@ class Tavily:
             log.warning("tavily answered HTTP %s", resp.status_code)
             return None
         return None
+
+
+def slug_matches(url: str, name: str) -> bool:
+    """Does the profile address carry the person's name? The first hit for a common name is often
+    someone else (V. N. Srivatsan -> vinod-sp-...); such a hit is not kept. The longest word of the
+    name (the surname, or the first name when that is longer) has to appear in the address."""
+    slug = url.rsplit("/in/", 1)[-1].lower()
+    words = [w for w in re.split(r"[^a-z]+", HONORIFICS.sub("", name).lower()) if len(w) >= 3]
+    if not words:
+        return False
+    key = max(reversed(words), key=len)
+    return key in slug
 
 
 def _retry_after(resp: httpx.Response, cap: float = 20.0) -> float:
@@ -308,6 +349,7 @@ def build_people_card(row: dict, company: str, deps: Deps | None = None) -> Peop
                            "people": []})  # fmt: skip
     router = deps.router or default_router()
     people, dropped = extract_people(subject, text, router)
+    people = merge_same_person(people)
     if not people:
         return PeopleCard({**base, "state": "check_source", "reason": "no person passed the quote "
                            "check", "dropped": dropped, "people": []})  # fmt: skip
