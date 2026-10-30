@@ -88,3 +88,4 @@
   - Hindustan Aeronautics' "Change in Director(s)" is tiered `director` from the exchange category alone; if it is a CMD change it is under-ranked until the PDF is read.
   - BSE and RSS sources are wired and unit-tested but were not exercised live (NSE answered). BSE attachment PDFs were not fetched live.
   - Migration 002 still to be applied.
+  - NSE answers from GitHub Actions (one probe, 2026-10-30: the announcements API returned rows from an `ubuntu-latest` runner; the home page is 403 there as everywhere). Recorded in `scripts/schedule_local.md`; S5 decides where the job runs, ideally after several probes at different times.

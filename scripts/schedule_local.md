@@ -51,4 +51,15 @@ macOS notes:
 
 ## Does NSE answer from GitHub Actions?
 
-See the result at the bottom of this file ("GitHub Actions probe"). S5 decides where the job runs.
+Probed once on 2026-10-30 (S3, a throwaway `nse-probe` workflow on a GitHub-hosted `ubuntu-latest`
+runner, since removed; run 41017177884 on the S3 pull request):
+
+- `www.nseindia.com/` itself answers 403, the same as from the dev sandbox.
+- The project's own `NSEClient` (HTTP/1.1, browser user agent, the 403 warm-up tolerated) still got
+  `/api/corporate-announcements` for INFY: **OK, 6 announcements for the last 3 days**.
+
+So NSE does answer from GitHub Actions today, contrary to the assumption that it blocks cloud IPs.
+That is one probe at one moment: Akamai's treatment of runner IP ranges can change, and runner IPs
+differ between runs. It is not enough to move the job off the laptop on its own; S5 should decide,
+ideally after a few scheduled probes at different times of day (also during 09:00-18:00 IST). The
+fallback if Actions gets blocked is the cron setup above.
