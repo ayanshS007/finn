@@ -42,6 +42,7 @@ class LlmLabel:
     quote_match: float
     reason: str | None = None  # why it is not ok
     attempts: int = 1
+    note: str | None = None  # an adjustment code made to a label that is ok
 
 
 def _catalogue(categories: Categories, allowed: list[str]) -> str:
@@ -89,6 +90,21 @@ def build_prompt(
     )
 
 
+def _check_results_tier(categories, source, category, tier, quote, match) -> LlmLabel:
+    """results.filed needs results for a period in the text; a quote that reads as a notice of a
+    meeting still to come is results.notice. Both checks are code (config/categories.yaml)."""
+    guard = categories.results_guard
+    if category != "results" or tier != "filed" or guard is None:
+        return LlmLabel(True, category, tier, quote, match)
+    if guard.quote_is_notice(quote):
+        note = "filed->notice: future meeting"
+        return LlmLabel(True, category, "notice", quote, match, note=note)
+    if not guard.filed_evidence.search(source):
+        reason = "labelled results.filed but the text states no results for a period"
+        return LlmLabel(False, category, tier, quote, match, reason)
+    return LlmLabel(True, category, tier, quote, match)
+
+
 def label_with_llm(
     category_raw: str | None,
     subject: str | None,
@@ -122,13 +138,14 @@ def label_with_llm(
             match = quote_match(out.quote, source)
             if not categories.is_valid(category, tier):
                 last = LlmLabel(False, category, tier, out.quote, match, f"bad tier {tier!r}")
-            elif (veto := categories.quote_vetoes.get(category)) and veto.search(out.quote):
-                reason = "the quote reads as a notice of a future event"
-                last = LlmLabel(False, category, tier, out.quote, match, reason)
             elif match < THRESHOLD:
                 last = LlmLabel(False, category, tier, out.quote, match, f"quote_match {match:.2f}")
             else:
-                return LlmLabel(True, category, tier, out.quote, match, None, attempt)
+                label = _check_results_tier(categories, source, category, tier, out.quote, match)
+                if label.ok:
+                    return LlmLabel(True, category, label.tier, out.quote, match, None, attempt,
+                                    label.note)  # fmt: skip
+                last = label
         log.info("label attempt %d failed: %s", attempt, last.reason)
         nudge = (
             "\n\nYour previous answer was rejected. Choose the category and tier exactly as "

@@ -104,15 +104,23 @@ def _filing(row: dict, fetch: Callable[[str], bytes]) -> XbrlFiling:
 
 
 def _xbrl_quarter(
-    symbol: str, end: date, rows: list[dict], basis: str, fetch: Callable[[str], bytes]
+    symbol: str,
+    end: date,
+    rows: list[dict],
+    basis: str,
+    fetch: Callable[[str], bytes],
+    bridge: dict[str, float] | None = None,
 ) -> list[Fact]:
     period = quarter_for_end(end)
     row = _pick_row(rows, end, basis)
     if row is None:
         return []
-    facts = _filing(row, fetch).to_facts(symbol)
+    filing = _filing(row, fetch)
+    facts = filing.to_facts(symbol)
     quarter = [f for f in facts if f.period == period.label]
     if quarter:
+        if bridge is not None:
+            bridge[period.label] = filing.bridge_cr(period)
         return quarter
     if period.quarter != 4:
         return []
@@ -316,8 +324,16 @@ def results_facts(
     client: ResultsClient | None = None,
     fetch: Callable[[str], bytes] | None = None,
     screener_fetch: Callable[[str], screener.ScreenerCompany] | None = None,
+    period_end: date | None = None,
+    bridge: dict[str, float] | None = None,
 ) -> list[Fact]:
-    """Facts for the current quarter, the previous quarter and the same quarter last year."""
+    """Facts for the current quarter, the previous quarter and the same quarter last year.
+
+    The current quarter is the latest one filed, or the quarter ending `period_end` (a quarter-end
+    date) when a caller needs the numbers of one particular filing. If `bridge` is given it is
+    filled with period label -> the XBRL lines between profit before tax less tax and the profit
+    for the period (associates, discontinued operations), for the arithmetic check.
+    """
     client = client or nse.NSEClient()
     fetch = fetch or fetch_xbrl
     screener_fetch = screener_fetch or screener.fetch_company
@@ -335,7 +351,8 @@ def results_facts(
         return company_cache[0]
 
     if rows:
-        current_end = date.fromisoformat(max(r["period_end"] for r in rows))
+        current_end = period_end or date.fromisoformat(max(r["period_end"] for r in rows))
+        quarter_for_end(current_end)  # must be a quarter end
         basis = (
             "consolidated"
             if any(
@@ -346,14 +363,16 @@ def results_facts(
         )
     else:
         columns = company().tables["quarterly"].df.columns
-        current_end = parse_period(columns[-1]).end
+        current_end = period_end or parse_period(columns[-1]).end
+        if period_end is not None:
+            quarter_for_end(current_end)
         basis = company().basis
     log.info("%s: current quarter %s, basis %s", symbol, quarter_for_end(current_end), basis)
 
     facts: list[Fact] = []
     for offset in (0, -1, -4):
         end = shift_quarters(current_end, offset)
-        got = _xbrl_quarter(symbol, end, rows, basis, fetch)
+        got = _xbrl_quarter(symbol, end, rows, basis, fetch, bridge)
         if not got:
             try:
                 got = _screener_quarter(symbol, end, company())

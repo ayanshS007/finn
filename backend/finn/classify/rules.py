@@ -10,7 +10,7 @@ finn.classify.llm_label.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -36,11 +36,14 @@ class Rule:
     category_raw: re.Pattern | None
     subject: re.Pattern | None
     not_category_raw: re.Pattern | None
+    not_subject: re.Pattern | None = None
 
     def matches(self, category_raw: str, subject: str) -> bool:
         if self.category_raw and not self.category_raw.search(category_raw):
             return False
         if self.subject and not self.subject.search(subject):
+            return False
+        if self.not_subject and self.not_subject.search(subject):
             return False
         return not (self.not_category_raw and self.not_category_raw.search(category_raw))
 
@@ -55,12 +58,23 @@ class RuleLabel:
 
 
 @dataclass(frozen=True)
+class ResultsGuard:
+    """Checks on an LLM label of results.filed (see `results:` in config/categories.yaml)."""
+
+    notice_quote: re.Pattern  # the quote reads as a meeting that has not happened yet
+    done_quote: re.Pattern  # ... unless it also says the meeting happened or results are in
+    filed_evidence: re.Pattern  # results for a period are stated somewhere in the text
+
+    def quote_is_notice(self, quote: str) -> bool:
+        return bool(self.notice_quote.search(quote) and not self.done_quote.search(quote))
+
+
+@dataclass(frozen=True)
 class Categories:
     definitions: dict[str, str]
     tiers: dict[str, dict[str, str]]  # category -> tier -> description (empty: no tiers)
     rules: tuple[Rule, ...]
-    # category -> pattern that disqualifies an LLM label whose quote matches it
-    quote_vetoes: dict[str, re.Pattern] = field(default_factory=dict)
+    results_guard: ResultsGuard | None = None
 
     @property
     def names(self) -> list[str]:
@@ -102,14 +116,19 @@ def parse_categories(data: dict) -> Categories:
     definitions: dict[str, str] = {}
     tiers: dict[str, dict[str, str]] = {}
     rules: list[Rule] = []
-    vetoes: dict[str, re.Pattern] = {}
+    guard: ResultsGuard | None = None
     for name, body in (data.get("categories") or {}).items():
         if not body.get("definition"):
             raise RulesError(f"{name}: missing definition")
         definitions[name] = body["definition"]
         tiers[name] = dict(body.get("tiers") or {})
-        if body.get("quote_veto"):
-            vetoes[name] = _compile(body["quote_veto"], macros, f"{name}/quote_veto")
+        if name == "results":
+            guard = ResultsGuard(
+                *(
+                    _compile(body[k], macros, f"results/{k}")
+                    for k in ("notice_quote", "done_quote", "filed_evidence")
+                )
+            )
         for raw in body.get("rules") or []:
             where = f"{name}/{raw.get('name')}"
             if not raw.get("name") or not (raw.get("category_raw") or raw.get("subject")):
@@ -128,12 +147,13 @@ def parse_categories(data: dict) -> Categories:
                     category_raw=_compile(raw.get("category_raw"), macros, where),
                     subject=_compile(raw.get("subject"), macros, where),
                     not_category_raw=_compile(raw.get("not_category_raw"), macros, where),
+                    not_subject=_compile(raw.get("not_subject"), macros, where),
                 )
             )
     if len(definitions) != 17:
         raise RulesError(f"expected 17 categories, found {len(definitions)}")
     rules.sort(key=lambda r: (r.priority, r.order))
-    return Categories(definitions, tiers, tuple(rules), vetoes)
+    return Categories(definitions, tiers, tuple(rules), guard)
 
 
 def load_categories(path: Path | None = None) -> Categories:

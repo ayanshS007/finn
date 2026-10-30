@@ -28,7 +28,7 @@ Verdict: claim_id, actual_fact_id (null only when abstaining or for went_quiet),
 FINN runs at zero cost. Use only free tiers: Groq free tier, Gemini API free tier via an AI Studio key with no billing, Supabase Free, Vercel Hobby, GitHub Actions on a public repo. Never call a paid-only model or feature. Rate limits are normal: on a 429 back off and retry once, then fail over to the other free provider, then mark the item pending and continue; never loop. Throttle calls to stay under free limits (small batches, sleeps between calls, cache everything). llm_calls logs tokens and a paid-equivalent cost estimate in INR (column cost_inr): the actual cost is always zero, and code and UI say so.
 
 ## Materiality
-score = category weight x holding factor (0.8-1.2) x recency, plus 15 if a price or volume rule fired the same day. 60 or more: card. 30-59: one-liner. Below 30: routine drawer. Weights live in config/materiality.yaml.
+score = category weight x holding factor (0.8-1.2), plus 15 if a price or volume rule fired the same day. 60 or more: card. 30-59: one-liner. Below 30: routine drawer. Status comes from this score alone, so importance does not fade with age; recency (1.0 falling to 0.5 over 24 hours) only orders filings inside a status group (rank = score x recency). results is tiered: results:filed 90 (the filing carries financial results), results:notice 15 (a board-meeting intimation or other notice about results). Weights live in config/materiality.yaml.
 
 ## Web design rules
 Numbers before words. At most one line of prose per card. Every card shows a "why ranked" line. The Brief ends with "You're caught up". Works at 360px. Light and dark themes. Tabular numerals for figures. Colour only for direction (up/down) and verdict chips.

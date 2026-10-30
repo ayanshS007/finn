@@ -60,6 +60,13 @@ BANK_METRICS = {
 }
 
 
+# lines between "profit before tax - tax" and "profit for the period" (consolidated filings)
+BRIDGE_CONCEPTS = (
+    "ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod",
+    "ProfitLossFromDiscontinuedOperationsAfterTax",
+)
+
+
 class XbrlError(SourceError):
     """The file is not the XBRL we expect. Callers report it; they never fill the gap."""
 
@@ -102,6 +109,17 @@ class XbrlFiling:
         return out
 
     # -- one period ---------------------------------------------------------------------
+
+    def bridge_cr(self, period: Period) -> float:
+        """What sits between profit before tax less tax and the profit for the period, in Rs crore:
+        share of profit of associates and joint ventures, and discontinued operations after tax
+        (either sign). Zero when the filing has neither line. finn.parse.checks.arithmetic_ok takes
+        it as `other`."""
+        return sum(
+            to_crore(x.value, x.unit)
+            for c in BRIDGE_CONCEPTS
+            if (x := self.get(c, period)) is not None
+        )
 
     def exceptional_loss_cr(self, period: Period) -> float | None:
         """Exceptional items of the period in Rs crore, a loss positive and a gain negative.

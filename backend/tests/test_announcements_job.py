@@ -77,11 +77,11 @@ class FakeQuery:
         return SimpleNamespace(data=self.rows)
 
 
-def run(anns, router=None, db=None, source="nse", symbols=None, pdf=fake_pdf):
+def run(anns, router=None, db=None, source="nse", symbols=None, pdf=fake_pdf, **kw):
     router = router or ScriptedRouter(replies())
     summary = job.run_once(
         since=timedelta(hours=24), source=source, symbols=symbols or ["INFY", "HAL", "ITC"], db=db,
-        router=router, now=NOW, fetchers={source: lambda s, a, b: anns}, pdf=pdf,
+        router=router, now=NOW, fetchers={source: lambda s, a, b: anns}, pdf=pdf, cards=False, **kw,
     )  # fmt: skip
     return summary, router
 
@@ -98,7 +98,7 @@ def test_a_rule_labelled_filing_uses_no_model_for_its_label_and_gets_a_one_liner
         "dividend_in_text",
     )
     assert row["quote"] is None and row["grader_score"] is None and row["text_excerpt"] is None
-    # dividend 25 x holding 1.0 x recency (2 h of 24: 0.9583) = 23.96: below 30, so the drawer
+    # dividend 25 x holding 1.0 = 25: below 30, so the drawer
     assert row["status"] == "drawer" and row["one_liner"] is None
     assert [c[0] for c in router.calls] == []  # no model call at all
     assert (
@@ -118,8 +118,9 @@ def test_a_30_to_59_score_gets_a_one_liner_and_a_60_plus_score_gets_a_why_line()
     assert by["2"]["status"] == "oneliner" and by["2"]["one_liner"] and by["2"]["why_line"] is None
     assert by["3"]["status"] == "card" and by["3"]["why_line"] and by["3"]["one_liner"] is None
     assert [c[0] for c in router.calls] == ["oneliner", "why_line"]
-    assert by["3"]["materiality"] == pytest.approx(90 * (1 - 2 / 24 * 0.5))
-    assert by["3"]["card_json"]["why_template"].startswith("results 90 x holding 1.00")
+    assert by["3"]["materiality"] == 90  # importance only: no recency decay in the score
+    assert by["3"]["card_json"]["why_template"].startswith("results.filed 90 x holding 1.00")
+    assert by["3"]["card_json"]["score_parts"]["recency"] == pytest.approx(1 - 2 / 24 * 0.5, abs=1e-3)
 
 
 def test_every_column_is_present_and_tier_is_the_smallint_position():

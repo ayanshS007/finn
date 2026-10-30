@@ -83,7 +83,7 @@ def one_liner_prompt(subject, category, tier, figures, nudge="") -> str:
         "Exchange'.\n\n"
         f"Category: {category}{' / ' + tier if tier else ''}\n"
         f"Subject: {subject}\n"
-        f"Figures computed by code:\n{_figures_block(figures)}\n\n"
+        f"Details checked by code:\n{_figures_block(figures)}\n\n"
         f'Answer as JSON: {{"line": <sentence>}}.{nudge}'
     )
 
@@ -91,18 +91,18 @@ def one_liner_prompt(subject, category, tier, figures, nudge="") -> str:
 def why_line_prompt(subject, category, tier, parts, figures, nudge="") -> str:
     facts = (
         f"base weight {parts['weight']:g}; holding factor {parts['holding']:.2f}; "
-        f"recency factor {parts['recency']:.2f}; price/volume bonus {parts['bonus']:g}; "
-        f"score {parts['score']:.0f}"
+        f"price/volume bonus {parts['bonus']:g}; score {parts['score']:.0f} "
+        f"(recency factor {parts['recency']:.2f} only orders the list)"
     )
     return (
         "Write one plain sentence of at most 25 words saying why this stock exchange filing ranks "
         "as important. Name the kind of event and the reason it matters. Use only the provided "
         "text. Do not use outside knowledge. Do not add any number that is not in the text "
-        "below.\n\n"
+        "below. When details are given, name the most important one exactly as written.\n\n"
         f"Category: {category}{' / ' + tier if tier else ''}\n"
         f"Subject: {subject}\n"
         f"Ranking inputs: {facts}\n"
-        f"Figures computed by code:\n{_figures_block(figures)}\n\n"
+        f"Details checked by code:\n{_figures_block(figures)}\n\n"
         f'Answer as JSON: {{"line": <sentence>}}.{nudge}'
     )
 

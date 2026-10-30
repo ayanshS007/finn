@@ -60,27 +60,50 @@ def test_the_threshold_is_0_4_of_the_4_word_runs():
     assert out.ok is (m >= 0.4)
 
 
-def test_results_label_whose_quote_is_a_notice_of_a_future_meeting_is_rejected():
-    """Real case: a Reliance filing about Jio Platforms' listing mentioned that JPL's board
-    meeting 'is scheduled to consider' results; the small model called the filing results."""
-    excerpt = "Further, a meeting of board of directors of JPL is scheduled to consider the financial results of JPL for the quarter."
-    future = {
-        "category": "results",
-        "tier": None,
-        "quote": "is scheduled to consider the financial results of JPL for the quarter",
-    }
-    other = {
-        "category": "M&A",
-        "tier": None,
-        "quote": "a meeting of board of directors of JPL is scheduled to consider the financial results",
-    }
-    out, router = run([future, other], excerpt=excerpt)
-    assert out.ok and out.category == "M&A" and len(router.calls) == 2
-    out, _ = run([future, future], excerpt=excerpt)
-    assert not out.ok and "future event" in out.reason
-    # the same words under another category are not vetoed
-    approved = {"category": "results", "tier": None, "quote": GOOD_QUOTE}
-    assert run([approved])[0].ok
+JIO = (
+    "Trading in equity shares of Jio Platforms Limited (JPL) will commence from October 28, "
+    "2026. Further, a meeting of board of directors of JPL is scheduled to be held on Friday, "
+    "October 30, 2026, inter alia, to consider and approve the standalone and consolidated "
+    "unaudited financial results of JPL for the quarter and half year ended September 30, 2026."
+)
+JIO_QUOTE = (
+    "to consider and approve the standalone and consolidated unaudited financial results of JPL "
+    "for the quarter and half year ended September 30, 2026"
+)
+
+
+def test_results_filed_whose_quote_is_a_notice_of_a_future_meeting_becomes_results_notice():
+    """Real case: a Reliance filing about Jio Platforms' listing said JPL's board meeting is
+    scheduled to consider results; the small model called it results. It is a notice, not
+    results: the tier is moved to notice (weight 15, the drawer) instead of rejecting the label."""
+    out, router = run([{"category": "results", "tier": "filed", "quote": JIO_QUOTE}], excerpt=JIO)
+    assert out.ok and (out.category, out.tier) == ("results", "notice")
+    assert out.note == "filed->notice: future meeting" and len(router.calls) == 1
+    # the model's own tier of notice is simply kept
+    out, _ = run([{"category": "results", "tier": "notice", "quote": JIO_QUOTE}], excerpt=JIO)
+    assert out.ok and out.tier == "notice" and out.note is None
+
+
+def test_results_filed_with_a_quote_of_results_that_are_in_stays_filed():
+    excerpt = (
+        "The Board of Directors at its meeting held today, to consider the matter, approved the "
+        "unaudited financial results for the quarter ended September 30, 2026."
+    )
+    quote = "approved the unaudited financial results for the quarter ended September 30, 2026"
+    out, _ = run([{"category": "results", "tier": "filed", "quote": quote}], excerpt=excerpt)
+    assert out.ok and out.tier == "filed" and out.note is None
+
+
+def test_results_filed_needs_results_for_a_period_in_the_text():
+    excerpt = "The Board met today and approved the matter placed before it by the management."
+    reply = {"category": "results", "tier": "filed", "quote": "approved the matter placed before it"}
+    out, router = run([reply, reply], excerpt=excerpt)
+    assert not out.ok and "no results for a period" in out.reason and len(router.calls) == 2
+
+
+def test_results_without_a_tier_is_a_bad_tier():
+    out, _ = run([{"category": "results", "tier": None, "quote": JIO_QUOTE}] * 2, excerpt=JIO)
+    assert not out.ok and "bad tier" in out.reason
 
 
 def test_unknown_category_and_missing_tier_are_failures_not_guesses():
