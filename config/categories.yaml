@@ -1,1 +1,331 @@
-# Filing category definitions. Stub: filled in by a later segment.
+# Filing categories. The 17 labels a filing can carry, each with a one-sentence definition (read by
+# the LLM labeller and by the grader), its tiers, and the regex rules that label it without a model.
+#
+# How rules work (finn/classify/rules.py)
+#   * The text matched is the exchange category and subcategory joined as "category | subcategory"
+#     (`category_raw`) and the announcement text (`subject`). All regexes are case-insensitive;
+#     `(?-i:...)` switches that off for short acronyms such as CFO.
+#   * A rule matches when every pattern it gives matches. `not_category_raw` vetoes a match.
+#   * Rules are tried by `priority` (lower first), then in file order, across ALL categories. The
+#     first match wins and is returned with its name, so every label can be traced to a rule.
+#   * `tier: null` on a rule means the category is certain but the tier is not: the filing goes to the
+#     LLM labeller for the tier. A filing no rule matches goes there too, and so does every rule
+#     with `llm_review: true` (the press_release catch-all).
+#   * `<<name>>` is replaced by the pattern of that name under `macros` before compiling.
+#
+# Priorities: 1 routine items that must never be mistaken for events (a monitoring-agency report
+# that mentions a QIP is not a QIP); 5 the press_release catch-all; 10 results; 20 litigation and
+# management change; 30 everything else; 90 weak category-only fallbacks.
+
+macros:
+  # people who count as CXO: CEO, MD, CFO, any "Chief ... Officer" except compliance, and the
+  # chair of the board (not of a committee)
+  cxo_role: '(?-i:\b(?:CEO|CFO|CMD|COO|CTO|CIO|CHRO)\b)|chief (?!compliance)[a-z]+(?: [a-z]+)? officer|managing director|chair(?:man|person|woman)(?!\s+of\s+(?:the\s+)?(?:\w+\s+)?(?:audit|nomination|remuneration|stakeholder|risk|csr|corporate social|committee))'
+  secretary_role: 'company secretary|compliance officer'
+  director_role: 'director'
+  mgmt_verb: 'appoint|re-?appoint|resign|cessation|cease|retire|demise|death|relinquish|removal|vacat|step(?:s|ping)? down|change in'
+  mgmt_category: 'change in (?:director|management)|appointment|resignation|retirement|cessation|re-?appointment|directorate'
+  rating_word: 'rating|outlook'
+
+categories:
+  results:
+    definition: 'The company filed its quarterly, half-yearly or annual financial results (or the board meeting outcome that approves them).'
+    rules:
+      - name: results_filing_category
+        priority: 10
+        category_raw: '^(?:financial results?|integrated filing.{0,4} financials?|result)\b'
+      - name: results_outcome_of_board_meeting
+        priority: 10
+        category_raw: 'outcome of board meeting|board meeting'
+        subject: 'financial results?|unaudited|(?:audited|standalone|consolidated) (?:financial|results)|(?:quarter|half[- ]year|nine months|year|period)(?:ly)? ended'
+      - name: results_named_in_text
+        priority: 10
+        subject: 'financial results? for the (?:quarter|half|year|period|nine)'
+        not_category_raw: 'press|newspaper|presentation|transcript|investor|analyst|dividend|record date|board meeting'
+
+  litigation:
+    definition: 'A court, tribunal, regulator or creditor action against or involving the company: insolvency proceedings, or orders, penalties and notices from SEBI, RBI, tax or other authorities.'
+    tiers:
+      insolvency: 'The company, or a subsidiary, faces insolvency or bankruptcy proceedings (CIRP, IBC, liquidation).'
+      regulatory: 'A regulator, tax authority or court passes an order, penalty, notice or ruling against the company.'
+    rules:
+      - name: insolvency_in_text
+        priority: 20
+        subject: 'corporate insolvency resolution process|\bCIRP\b|insolvency (?:and bankruptcy )?(?:code|petition|proceedings?|resolution)|\bIBC\b|admitted .{0,40}insolvency'
+        tier: insolvency
+      - name: insolvency_exchange_category
+        priority: 20
+        category_raw: 'corporate insolvency resolution'
+        tier: null  # the category also carries NCLT/NCLAT updates in which the company is a party, not the debtor
+      - name: regulatory_order_in_text
+        priority: 20
+        subject: '(?:\bSEBI\b|(?-i:\b(?:RBI|ED|CBI|CCI|DGGI|SFIO|GST|NCLT|NCLAT)\b)|enforcement directorate|income[- ]tax|competition commission|high court|supreme court|tribunal).{0,100}(?:order|penalty|fine\b|show[- ]cause|summons|raid|search and seizure|investigation|adjudicat|demand notice)'
+        tier: regulatory
+      - name: show_cause_or_penalty
+        priority: 20
+        subject: 'show[- ]cause notice|search and seizure|adjudication order|imposed (?:a )?(?:penalty|fine)'
+        tier: regulatory
+      - name: litigation_exchange_category
+        priority: 20
+        category_raw: 'litigation|dispute|action\(s\) taken or orders passed|arbitration'
+        tier: null
+
+  management_change:
+    definition: 'A change in the people who run or oversee the company: appointment, resignation, retirement or cessation of a CEO, MD, CFO, chair, director, company secretary or compliance officer.'
+    tiers:
+      cxo: 'CEO, Managing Director, CFO or another chief officer, or the chair of the board.'
+      director: 'A board director (executive, non-executive or independent) who is not the chair.'
+      other_kmp: 'Company Secretary or Compliance Officer.'
+    rules:
+      - name: cxo_in_management_category
+        priority: 20
+        category_raw: '<<mgmt_category>>'
+        subject: '<<cxo_role>>'
+        tier: cxo
+      - name: cxo_named_with_verb
+        priority: 20
+        subject: '(?:<<mgmt_verb>>).{0,120}(?:<<cxo_role>>)'
+        tier: cxo
+      - name: secretary_in_management_category
+        priority: 20
+        category_raw: '<<mgmt_category>>'
+        subject: '<<secretary_role>>'
+        tier: other_kmp
+      - name: secretary_named_with_verb
+        priority: 20
+        subject: '(?:<<mgmt_verb>>).{0,120}(?:<<secretary_role>>)'
+        tier: other_kmp
+      - name: director_in_management_category
+        priority: 20
+        category_raw: '<<mgmt_category>>'
+        subject: '<<director_role>>'
+        tier: director
+      - name: director_named_with_verb
+        priority: 20
+        subject: '(?:<<mgmt_verb>>).{0,120}(?:<<director_role>>)'
+        not_category_raw: 'outcome of board meeting|board meeting'
+        tier: director
+      - name: change_in_directors_category
+        priority: 20
+        category_raw: 'change in director'
+        tier: director
+      - name: change_in_management_category
+        priority: 20
+        category_raw: '^(?:change in management|appointment|resignation|retirement|cessation)'
+        tier: null  # no role in the text: the tier has to come from the filing itself
+
+  fund_raise:
+    definition: 'The company raises or returns capital: an equity issue (QIP, rights, preferential, buyback) or a debt raise (NCDs, bonds, commercial paper, term loans).'
+    tiers:
+      equity: 'QIP, rights issue, preferential allotment, warrants or a buyback of equity shares.'
+      debt: 'Non-convertible debentures, bonds, commercial paper, term loans or other borrowing.'
+    rules:
+      - name: equity_raise_in_text
+        priority: 30
+        subject: '\bQIP\b|qualified institutions? placement|rights (?:issue|entitlement|basis)|right issue|preferential (?:issue|allotment|basis)|buy[- ]?back|follow[- ]on public offer|\bFPO\b|convertible warrants'
+        tier: equity
+      - name: debt_raise_in_text
+        priority: 30
+        subject: 'non[- ]convertible debentures?|\bNCDs?\b|debentures?|\bbonds?\b|commercial paper|term loan|external commercial borrowing|\bECB\b|raising of (?:funds|capital) through (?:debt|borrowing)'
+        tier: debt
+      - name: equity_exchange_category
+        priority: 30
+        category_raw: 'buy[- ]?back|rights issue|preferential|qualified institution|qip'
+        tier: equity
+      - name: fund_raise_exchange_category
+        priority: 30
+        category_raw: 'fund ?raising|issue of securities|allotment of securities'
+        tier: null
+
+  credit_rating:
+    definition: 'A credit rating agency assigns, changes or reaffirms a rating or outlook on the company or its debt.'
+    tiers:
+      downgrade: 'The rating or outlook is lowered.'
+      upgrade: 'The rating or outlook is raised.'
+      reaffirmed: 'The rating is reaffirmed, retained, assigned or withdrawn with no change in level.'
+    rules:
+      - name: rating_downgrade
+        priority: 30
+        subject: '(?:<<rating_word>>).{0,120}(?:downgrad|lowered|revised downward|negative)|(?:downgrad|lowered|revised downward).{0,120}(?:<<rating_word>>)'
+        tier: downgrade
+      - name: rating_upgrade
+        priority: 30
+        subject: '(?:<<rating_word>>).{0,120}(?:upgrad|revised upward|positive)|(?:upgrad|revised upward).{0,120}(?:<<rating_word>>)'
+        tier: upgrade
+      - name: rating_reaffirmed
+        priority: 30
+        subject: '(?:<<rating_word>>).{0,120}(?:reaffirm|re-affirm|retain|maintain|reiterat|assigned|withdrawn)|(?:reaffirm|re-affirm|retain|maintain|reiterat|assigned|withdrawn).{0,120}(?:<<rating_word>>)'
+        tier: reaffirmed
+      - name: credit_rating_exchange_category
+        priority: 30
+        category_raw: 'credit rating'
+        tier: null
+
+  pledging:
+    definition: 'A promoter or the company creates, invokes or releases a pledge or other encumbrance on shares.'
+    tiers:
+      increase: 'A pledge is created, invoked or increased.'
+      release: 'A pledge is released, revoked or reduced.'
+    rules:
+      - name: pledge_release
+        priority: 30
+        subject: '(?:pledge|encumbrance).{0,100}(?:releas|revok|revoc|reduc|redeem|cessation)|(?:releas|revok|revoc|reduc).{0,100}(?:pledge|encumbrance)'
+        tier: release
+      - name: pledge_increase
+        priority: 30
+        subject: '(?:creation|created|invocation|invoked|fresh|additional|further).{0,100}(?:pledge|encumbrance)|(?:pledge|encumbrance).{0,100}(?:creation|created|invocation|invoked|fresh|additional|further)'
+        tier: increase
+      - name: pledge_exchange_category
+        priority: 30
+        category_raw: 'encumbrance|pledg'
+        tier: null
+
+  insider_trading:
+    definition: 'A disclosure of trades or holdings by promoters, directors or designated persons, or a SAST takeover-code disclosure.'
+    rules:
+      - name: insider_or_sast_in_text
+        priority: 30
+        subject: 'regulation (?:7|29|31)\b|reg(?:ulation)?\.? ?(?:7|29)\(|prohibition of insider trading|substantial acquisition of shares and takeovers|\bSAST\b|trading by (?:promoter|director|designated person)'
+      - name: insider_exchange_category
+        priority: 30
+        category_raw: 'insider trading|sast|takeover|prohibition of insider'
+
+  M&A:
+    definition: 'The company buys, sells, merges or demerges a business, a stake or a subsidiary, or announces a scheme of arrangement or an open offer.'
+    rules:
+      - name: mna_exchange_category
+        priority: 30
+        category_raw: 'acquisition|amalgamation|merger|scheme of arrangement|sale or disposal|other restructuring|takeover|open offer|demerger|divest'
+      - name: mna_in_text
+        priority: 30
+        subject: 'acqui(?:re|sition|red)|\bmerger|amalgamation|demerger|slump sale|joint venture|scheme of arrangement|binding term sheet|divest'
+
+  earnings_call:
+    definition: 'The company files an earnings call transcript or gives notice of an earnings or results conference call.'
+    tiers:
+      transcript: 'The transcript of an earnings call is filed.'
+      notice: 'Notice, schedule or invitation for an earnings or results call.'
+    rules:
+      - name: earnings_transcript
+        priority: 30
+        subject: 'transcript'
+        tier: transcript
+      - name: earnings_call_notice
+        priority: 30
+        subject: '(?:earnings|results?|quarter\w*) (?:conference )?call.{0,100}(?:schedul|intimat|will be held|to be held|invit|notice)|(?:schedul|intimat|invit|notice).{0,100}(?:earnings|results?|quarter\w*) (?:conference )?call'
+        tier: notice
+
+  dividend:
+    definition: 'The board declares, recommends or fixes a record date for a dividend.'
+    rules:
+      - name: dividend_in_text
+        priority: 30
+        subject: 'dividend'
+        not_category_raw: 'newspaper|press|presentation|transcript|financial results|outcome of board meeting'
+      - name: dividend_exchange_category
+        priority: 30
+        category_raw: '^dividend'
+
+  bonus_split:
+    definition: 'The company announces a bonus issue or a stock split or sub-division of shares.'
+    rules:
+      - name: bonus_or_split_in_text
+        priority: 30
+        subject: 'bonus (?:shares?|issue|equity)|stock split|sub-?division of (?:equity )?shares|split of (?:equity )?shares'
+      - name: bonus_or_split_exchange_category
+        priority: 30
+        category_raw: 'bonus|stock split|sub-?division'
+
+  capex:
+    definition: 'The company announces a capital expenditure, capacity expansion or a new plant or facility.'
+    rules:
+      - name: capex_in_text
+        priority: 30
+        subject: '\bcapex\b|capital expenditure|capacity expansion|expansion of (?:the )?(?:manufacturing|plant|capacity)|new (?:manufacturing )?(?:plant|facility|unit)|greenfield|brownfield'
+      - name: capex_exchange_category
+        priority: 30
+        category_raw: 'capacity expansion|capital expenditure'
+
+  postal_ballot:
+    definition: 'Notice or results of a postal ballot or e-voting resolution outside a general meeting.'
+    rules:
+      - name: postal_ballot_anywhere
+        priority: 30
+        category_raw: 'postal ballot'
+      - name: postal_ballot_in_text
+        priority: 30
+        subject: 'postal ballot'
+
+  agm_egm:
+    definition: 'Notice, schedule or outcome of an annual or extraordinary general meeting of shareholders.'
+    rules:
+      - name: agm_egm_exchange_category
+        priority: 30
+        category_raw: '\bAGM\b|\bEGM\b|annual general meeting|extra-?ordinary general meeting|shareholders.? meeting'
+      - name: agm_egm_in_text
+        priority: 30
+        subject: 'annual general meeting|extra-?ordinary general meeting|\bAGM\b|\bEGM\b|e-voting|book closure'
+
+  investor_meetings:
+    definition: 'Notice of, links to recordings of, or presentations for analyst and institutional investor meetings and calls.'
+    rules:
+      - name: investor_meet_exchange_category
+        priority: 31
+        category_raw: 'analysts?/institutional investor|investor meet|analyst meet|investor presentation|con\. call updates'
+      - name: investor_meet_in_text
+        priority: 31
+        subject: 'analyst\(?s?\)?[/ ]|investor\(?s?\)? meet|investor (?:conference|presentation)|schedule of meet|link of recording|audio recording|video recording|earnings call'
+
+  press_release:
+    definition: 'A company-issued news item or business update (order wins, launches, partnerships, awards) that fits no more specific category.'
+    rules:
+      # Every exchange-labelled press release is re-read by the LLM labeller, which may move it to a
+      # more specific category; if it cannot, it stays a press_release.
+      - name: press_release_catch_all
+        priority: 5
+        category_raw: '^press release'
+        llm_review: true
+      - name: order_win
+        priority: 90
+        category_raw: 'bagging|receiving of orders'
+
+  unclassified:
+    definition: 'Routine, administrative or compliance filing with no investment signal, or a filing the labeller could not place.'
+    rules:
+      - name: newspaper_publication
+        priority: 1
+        category_raw: 'newspaper publication'
+      - name: monitoring_agency_report
+        priority: 1
+        category_raw: 'monitoring agency report'
+      - name: deviation_statement
+        priority: 1
+        category_raw: 'statement of deviation'
+      - name: depositories_certificate
+        priority: 1
+        category_raw: 'certificate under sebi \(depositories'
+      - name: routine_compliance
+        priority: 1
+        category_raw: 'shareholding pattern|corporate governance|secretarial compliance|loss of share|duplicate share|compliance report|investor grievance|investor complaints|reg(?:ulation)?\.? ?(?:24|40|74|13)\b'
+      - name: trading_window
+        priority: 1
+        subject: 'trading window'
+      - name: esop_exchange_category
+        priority: 1
+        category_raw: 'ESOP|ESOS|ESPS'
+      - name: esop_grant_or_allotment
+        priority: 1
+        subject: '(?-i:\b(?:ESOP|ESOS|ESPS|ESAR|RSU|SARs?)\b)|stock options?|restricted stock|employee stock|share[- ]based'
+      - name: board_meeting_intimation
+        priority: 3
+        subject: 'meeting of the board of directors.{0,60}(?:is |are )?scheduled|board meeting.{0,40}(?:scheduled|to be held|intimation)'
+        not_category_raw: 'outcome of board meeting'
+      - name: intra_group_housekeeping
+        priority: 3
+        subject: 'incorporation of (?:a |an )?(?:new )?(?:wholly[- ]owned )?(?:step[- ]down )?subsidiary|strike[- ]?off|voluntary (?:winding|liquidation)|dissolution|letter of comfort'
+      - name: intra_group_guarantee
+        priority: 3
+        category_raw: 'giving guarantees|becoming a surety'
+      - name: insider_fair_disclosure_code
+        priority: 3
+        subject: 'regulation 8\(?[12]\)?.{0,120}insider|code of (?:practices and procedures for )?fair disclosure'

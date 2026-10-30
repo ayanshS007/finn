@@ -24,3 +24,32 @@ research_set:
   - INFY
   - DIXON
   - POLYCAB
+
+# Optional relative size of each holding (any positive numbers, e.g. percent of the portfolio).
+# Scaled into the materiality holding factor 0.8-1.2; a ticker left out gets 1.0. Left empty on
+# purpose: FINN does not invent holdings.
+# weights:
+#   INFY: 12
+#   HDFCBANK: 9
+
+# Exchange (NSE sm_name) company names, read from the live announcements API on 2026-10-30. The RSS
+# feed carries no symbol, so the job maps its company names back to symbols with this list.
+company_names:
+  RELIANCE: Reliance Industries Limited
+  HDFCBANK: HDFC Bank Limited
+  INFY: Infosys Limited
+  ITC: ITC Limited
+  LT: Larsen & Toubro Limited
+  BHARTIARTL: Bharti Airtel Limited
+  MARUTI: Maruti Suzuki India Limited
+  SUNPHARMA: Sun Pharmaceutical Industries Limited
+  BAJFINANCE: Bajaj Finance Limited
+  ADANIENT: Adani Enterprises Limited
+  ETERNAL: Eternal Limited
+  TRENT: Trent Limited
+  DIXON: Dixon Technologies (India) Limited
+  POLYCAB: Polycab India Limited
+  HAL: Hindustan Aeronautics Limited
+  PAYTM: One 97 Communications Limited
+  KPITTECH: KPIT Technologies Limited
+  GRAVITA: Gravita India Limited

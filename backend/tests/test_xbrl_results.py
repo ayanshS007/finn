@@ -203,6 +203,7 @@ def test_fetch_xbrl_returns_the_document_and_rejects_block_pages(tmp_path):
 
 # -- exceptional items: EBITDA excludes them -------------------------------------------------
 
+
 def exceptional_filing(before, exceptional, after, **extra):
     """One quarter: other income 50, finance costs 20, D&A 100 (Rs crore x 1e7 = rupees)."""
     cr = 10_000_000
@@ -250,9 +251,12 @@ def test_zero_exceptional_line_is_flagged_false_and_keeps_the_plain_value():
 
 
 def test_filing_without_the_line_has_no_flag():
-    facts = [("OtherIncome", "OneD", 5 * 10**7), ("FinanceCosts", "OneD", 2 * 10**7),
-             ("DepreciationDepletionAndAmortisationExpense", "OneD", 10**8),
-             ("ProfitBeforeTax", "OneD", 10**9)]
+    facts = [
+        ("OtherIncome", "OneD", 5 * 10**7),
+        ("FinanceCosts", "OneD", 2 * 10**7),
+        ("DepreciationDepletionAndAmortisationExpense", "OneD", 10**8),
+        ("ProfitBeforeTax", "OneD", 10**9),
+    ]
     got = parse_xbrl(make_xbrl("consolidated", CTX, facts), "u://x").to_facts("T")
     assert all(f.has_exceptional_items is None for f in got)
     assert all(f.metric != "ebitda" for f in got)  # the line is needed to say it is excluded

@@ -375,14 +375,29 @@ def test_q4_without_a_december_filing_is_left_out():
 def test_fallback_ebitda_is_skipped_when_exceptional_items_sit_inside_pbt():
     def fact(metric, value, flag):
         return results.Fact(
-            ticker="T", metric=metric, value_cr=value, unit_original="lakh", period="FY25Q3",
-            period_kind="Q", basis="standalone", source_url="u", quote="q", quote_match=1.0,
+            ticker="T",
+            metric=metric,
+            value_cr=value,
+            unit_original="lakh",
+            period="FY25Q3",
+            period_kind="Q",
+            basis="standalone",
+            source_url="u",
+            quote="q",
+            quote_match=1.0,
             has_exceptional_items=flag,
         )
 
     def inputs(flag):
-        return [fact(m, v, flag) for m, v in
-                (("pbt", 100.0), ("finance_costs", 5.0), ("d_and_a", 10.0), ("other_income", 8.0))]
+        return [
+            fact(m, v, flag)
+            for m, v in (
+                ("pbt", 100.0),
+                ("finance_costs", 5.0),
+                ("d_and_a", 10.0),
+                ("other_income", 8.0),
+            )
+        ]
 
     assert [f.metric for f in results.add_ebitda(inputs(True))].count("ebitda") == 0
     plain = by(results.add_ebitda(inputs(False)))["FY25Q3", "ebitda"]

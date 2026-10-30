@@ -1,0 +1,44 @@
+# Model IDs by role. Every LLM call names a role, never a model: change a model here only.
+# FREE TIER ONLY (CLAUDE.md "Free-tier rule"): Groq free tier, and Gemini via an AI Studio key with
+# no billing. IDs below were listed from the live APIs and each answered a test call with the
+# project keys on 2026-10-30 (see docs/BUILD_LOG.md). llama-3.1-8b-instant is no longer served on
+# Groq (HTTP 404), so `small` is openai/gpt-oss-20b. Pin explicit IDs, never a *-latest alias:
+# an alias can move to a model that is not free.
+roles:
+  small:    {provider: groq,   model: openai/gpt-oss-20b}      # labels, grader, one-liners
+  reader:   {provider: gemini, model: gemini-3.8-flash}        # claims, verdicts, long text
+  judge:    {provider: gemini, model: gemini-3.8-flash}        # checks and verdicts
+  lite:     {provider: gemini, model: gemini-3.5-flash-lite}   # short profile text
+  failover: {provider: groq,   model: openai/gpt-oss-120b}     # Groq stand-in for Gemini steps
+
+# On a 429 (after one backed-off retry) the call moves to the other free provider's role.
+fallback:
+  small: lite
+  lite: small
+  reader: failover
+  judge: failover
+  failover: reader
+
+# Client-side throttle, kept under the free-tier limits. Groq free tier for these models answers
+# x-ratelimit-limit-requests 1000 per day and x-ratelimit-limit-tokens 8000 per minute; Gemini
+# free-tier flash models allow roughly 10 requests per minute, so the gap is deliberately wide.
+limits:
+  groq:   {min_gap_s: 2.5, tokens_per_minute: 8000, max_wait_s: 30}
+  gemini: {min_gap_s: 6.0, tokens_per_minute: 250000, max_wait_s: 30}
+
+# Per-call options.
+options:
+  openai/gpt-oss-20b:  {reasoning_effort: low}
+  openai/gpt-oss-120b: {reasoning_effort: low}
+
+# PAID-EQUIVALENT price estimates, USD per million tokens. They exist only so llm_calls can show
+# what the same traffic would cost on a paid plan; FINN pays nothing. The figures are estimates
+# (Groq's published gpt-oss prices; Gemini flash prices assumed from the 2.5 generation) and are
+# not billed anywhere.
+paid_equivalent_usd_per_mtok:
+  openai/gpt-oss-20b:     {in: 0.075, out: 0.30}
+  openai/gpt-oss-120b:    {in: 0.15,  out: 0.60}
+  gemini-3.8-flash:       {in: 0.30,  out: 2.50}
+  gemini-3.5-flash-lite:  {in: 0.10,  out: 0.40}
+  default:                {in: 0.30,  out: 2.50}
+usd_to_inr: 90
