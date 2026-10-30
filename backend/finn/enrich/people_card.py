@@ -43,6 +43,7 @@ PROFILE_MATCH = 0.8  # the shown profile text must be (nearly) word for word the
 FIELDS = ("name", "role", "change", "effective_date", "brief_profile")
 HONORIFICS = re.compile(r"^(?:mr|mrs|ms|miss|dr|shri|smt|prof|sri)\.?\s+", re.IGNORECASE)
 COMPANY_SUFFIX = re.compile(r"\s+(?:limited|ltd\.?|corporation)\s*$", re.IGNORECASE)
+REAPPOINT = re.compile(r"re-?\s?appoint", re.IGNORECASE)
 LINKEDIN = re.compile(r"^https?://(?:[a-z0-9-]+\.)?linkedin\.com/in/[^/?#\s]+", re.IGNORECASE)
 
 
@@ -99,6 +100,7 @@ class Person:
     effective_date: str | None = None  # ISO date, parsed in code from the filing's own words
     brief_profile: str | None = None  # the filing's own text, quoted
     evidence: dict[str, dict] = field(default_factory=dict)  # field -> {quote, quote_match}
+    reappointment: bool = False  # the change quote says re-appointment: not a new face
     linkedin_url: str | None = None
     linkedin_state: str = "not_searched"  # found | none | pending | no_api_key | not_searched
 
@@ -108,6 +110,7 @@ class Person:
             "role": self.role,
             "change": self.change,
             "effective_date": self.effective_date,
+            "reappointment": self.reappointment,
             "brief_profile": self.brief_profile,
             "linkedin_url": self.linkedin_url,
             "linkedin_state": self.linkedin_state,
@@ -150,6 +153,9 @@ def _clean(person: PersonOut, source: str, dropped: list[str]) -> Person | None:
                     for k, (_, m) in kept.items()}  # fmt: skip
     out.role = kept.get("role", (None,))[0]
     out.change = kept.get("change", (None,))[0]
+    out.reappointment = bool(
+        out.change == "joins" and REAPPOINT.search(person.change.quote or "")
+    )
     out.brief_profile = kept.get("brief_profile", (None,))[0]
     if "effective_date" in kept:
         try:
@@ -307,9 +313,16 @@ def build_people_card(row: dict, company: str, deps: Deps | None = None) -> Peop
                            "check", "dropped": dropped, "people": []})  # fmt: skip
     tavily = deps.tavily or Tavily()
     for p in people:
-        if p.change == "joins":
+        if p.change == "joins" and not p.reappointment:  # a new appointee, not a re-appointment
             found = tavily.linkedin(p.name, company)
             p.linkedin_url, p.linkedin_state = found.url, found.state
+    figures = {}
+    for p in people:
+        when = f"effective {p.effective_date}" if p.effective_date else None
+        detail = ", ".join(x for x in (p.role, when) if x)
+        label = f"{p.name} {'re-appointed' if p.reappointment else p.change or 'named'}"
+        figures[label] = detail or "no role given"
     return PeopleCard(
-        {**base, "state": "ok", "people": [p.as_json() for p in people], "dropped": dropped}
+        {**base, "state": "ok", "people": [p.as_json() for p in people], "dropped": dropped},
+        figures=figures,
     )

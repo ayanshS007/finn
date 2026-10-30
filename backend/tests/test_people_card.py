@@ -116,7 +116,7 @@ def test_one_entry_per_person_with_every_field_quoted_and_checked():
         assert all(e["quote"] and e["quote_match"] >= 0.4 for e in person["evidence"].values())
     assert len(router.calls) == 1 and router.calls[0][:2] == ("people", "lite")
     assert "Use only the provided text. Do not use outside knowledge." in router.calls[0][2]
-    assert card.facts == [] and card.figures == {}  # a people card carries no figures
+    assert card.facts == []  # a people card carries no figures, only names for the why-line
 
 
 def test_the_brief_profile_shown_is_the_filings_own_text_that_passes_the_match():
@@ -274,3 +274,24 @@ def test_no_api_key_skips_the_search_and_says_so():
     card, _, _ = build([{"people": [joiner()]}], tavily=tavily(transport, key=None))
     assert card.fragment["people"][0]["linkedin_state"] == "no_api_key"
     assert transport.requests == [] and card.fragment["state"] == "ok"
+
+
+def test_a_reappointment_is_flagged_and_not_searched_on_linkedin():
+    again = joiner(change=field("joins", "has been re-appointed as MD & CEO of the Bank"))
+    letter = LETTER + " Mr. Anup Bagchi has been re-appointed as MD & CEO of the Bank."
+    router = ScriptedRouter([{"people": [again]}])
+    transport = FakeTavily()
+    deps = pc.Deps(router=router, tavily=tavily(transport), pdf=lambda u, p=3: PdfText(u, letter, 2, "x"))  # fmt: skip
+    card = pc.build_people_card(ROW, "HDFC Bank Limited", deps)
+    person = card.fragment["people"][0]
+    assert person["reappointment"] is True and person["change"] == "joins"
+    assert person["linkedin_state"] == "not_searched" and transport.requests == []
+    assert "re-appointed" in next(iter(card.figures))
+
+
+def test_the_card_hands_the_why_line_the_names_roles_and_dates_it_checked():
+    card, _, _ = build([{"people": [joiner(), leaver()]}])
+    assert card.figures == {
+        "Mr. Anup Bagchi joins": "MD & CEO, effective 2026-10-27",
+        "Mr. Sashidhar Jagdishan leaves": "MD & CEO, effective 2026-10-26",
+    }

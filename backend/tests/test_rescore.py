@@ -99,6 +99,17 @@ def test_a_second_run_changes_nothing_and_calls_no_model():
     assert again.changed == 0 and len(router.calls) == calls and again.before == again.after
 
 
+def test_time_alone_does_not_make_a_row_look_changed():
+    db, _, ctx = make()
+    rescore.run(db, ctx)
+    fresh = [r for r in db.tables["filings"] if r["source_id"] == "m1"][0]
+    fresh["filed_at"] = (NOW - timedelta(hours=3)).isoformat()  # inside the 24 h recency window
+    rescore.run(db, ctx)
+    later = job.Context(router=ctx.router, categories=ctx.categories, now=NOW + timedelta(hours=2), pdf=fake_pdf, db=db)  # fmt: skip
+    again = rescore.run(db, later)
+    assert again.changed == 0  # recency moved, nothing that matters did
+
+
 def test_dry_run_writes_nothing():
     db, _, ctx = make()
     before = [dict(r) for r in db.tables["filings"]]

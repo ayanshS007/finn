@@ -174,10 +174,24 @@ def _drop_id(row: dict) -> dict:
     return {k: v for k, v in row.items() if k != "id"}
 
 
+def _stable(notes: dict | None) -> dict:
+    """card_json without the parts that only move with the clock (recency, rank and the line that
+    quotes the recency), so a second run over unchanged rows writes nothing."""
+    notes = dict(notes or {})
+    moving = ("recency", "rank")
+    parts = {k: v for k, v in (notes.get("score_parts") or {}).items() if k not in moving}
+    if parts:
+        notes["score_parts"] = parts
+    notes.pop("why_template", None)
+    return notes
+
+
 def _differs(old: dict, new: dict) -> bool:
-    keys = ("category", "tier", "status", "materiality", "one_liner", "why_line", "card_json",
-            "label_source", "quote", "grader_score")  # fmt: skip
-    return any(old.get(k) != new.get(k) for k in keys)
+    keys = ("category", "tier", "status", "materiality", "one_liner", "why_line", "label_source",
+            "quote", "grader_score")  # fmt: skip
+    if any(old.get(k) != new.get(k) for k in keys):
+        return True
+    return _stable(old.get("card_json")) != _stable(new.get("card_json"))
 
 
 def default_context(db: Db | None, router) -> job.Context:

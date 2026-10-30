@@ -84,7 +84,7 @@ class CardBuilder:
             )
             deps = people_card.Deps(router=self.router, tavily=self.tavily, pdf=self.pdf)
             built = people_card.build_people_card(row, company, deps)
-            return Card(kind, built.fragment)
+            return Card(kind, built.fragment, [], built.figures)
         return None
 
     def duplicate_of(self, symbol: str, period: str, own_source_id: str | None) -> str | None:
