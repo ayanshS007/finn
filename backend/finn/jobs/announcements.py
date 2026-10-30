@@ -36,7 +36,9 @@ from finn.classify import grader, llm_label
 from finn.classify.rules import Categories, RuleLabel, default_categories
 from finn.config import REPO_ROOT, load_portfolio, portfolio_names, portfolio_symbols
 from finn.db.client import Db
+from finn.enrich.cards import Card, CardBuilder, apply_card, card_kind
 from finn.enrich.pdf import pdf_excerpt
+from finn.enrich.results_card import CardPending
 from finn.llm.router import (
     ACTUAL_COST_INR,
     DbStore,
@@ -154,6 +156,9 @@ class Context:
     holdings: dict[str, float] | None = None
     price_volume: set[tuple[str, str]] = field(default_factory=set)  # (symbol, IST date)
     pdf: Callable = pdf_excerpt
+    db: Db | None = None
+    # (row, category, tier) -> Card | None; None builds no cards
+    build_card: Callable[[dict, str, str | None], Card | None] | None = None
 
 
 def process(ann: dict, source: str, ctx: Context) -> dict:
@@ -220,9 +225,16 @@ def process(ann: dict, source: str, ctx: Context) -> dict:
     status = "drawer" if drawer_reason else status_for(score.score)
     finish(category, tier, status, drawer_reason)
 
+    card: Card | None = None
+    if status in ("card", "oneliner") and ctx.build_card and card_kind(category, tier):
+        card = _build_card(row, category, tier, notes, ctx)
+        if card is not None and card.state == "duplicate":
+            return finish(category, tier, "drawer", f"duplicate of {card.fragment['duplicate_of']}")
+
     if status in ("card", "oneliner"):
         try:
-            _write_text(row, status, score, category, tier, subject, notes, ctx)
+            figures = card.figures if card else None
+            _write_text(row, status, score, category, tier, subject, notes, ctx, figures)
         except LLMConfigError:
             raise
         except LLMError as exc:  # leave the text empty; the code-written why_template remains
@@ -255,6 +267,8 @@ def _llm_label(ann, raw, subject, hint: RuleLabel | None, row, notes, ctx: Conte
 
     row["label_source"] = "llm"
     category, tier = label.category, label.tier
+    if label.note:
+        notes["label_note"] = label.note
     if hint and hint.llm_review and category == "unclassified":
         category, tier = hint.category, hint.tier  # the exchange called it a press release
     grade = grader.grade_label(
@@ -288,12 +302,37 @@ def _score(row, category, tier, filed_at, ctx: Context, notes) -> Score:
     return score
 
 
-def _write_text(row, status, score: Score, category, tier, subject, notes, ctx: Context):
+def _build_card(row, category, tier, notes, ctx: Context) -> Card | None:
+    """Build the results or people card. A source or model that is unavailable leaves the card
+    pending (card_json.card_error); the filing is still stored and build_cards.py can retry."""
+    try:
+        card = ctx.build_card(row, category, tier)
+        if card is not None:
+            apply_card(row, card, ctx.db)  # may raise: the facts must be stored with the card
+            notes.update(row["card_json"])
+            row["card_json"] = notes
+        return card
+    except LLMConfigError:
+        raise
+    except (SourceError, LLMError, CardPending) as exc:
+        log.warning("card pending for %s %s: %s", row["symbol"], row["source_id"], exc)
+        notes["card_error"] = str(exc)[:200]
+    except Exception as exc:  # a card must never lose the filing it belongs to
+        log.exception("card failed for %s %s", row["symbol"], row["source_id"])
+        notes["card_error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+    return None
+
+
+def _write_text(
+    row, status, score: Score, category, tier, subject, notes, ctx: Context, figures=None
+):
     if status == "card":
-        out = oneliner.write_why_line(subject, category, tier, score.parts(), router=ctx.router)
+        out = oneliner.write_why_line(
+            subject, category, tier, score.parts(), figures, router=ctx.router
+        )
         row["why_line"] = out.text
     else:
-        out = oneliner.write_one_liner(subject, category, tier, router=ctx.router)
+        out = oneliner.write_one_liner(subject, category, tier, figures, router=ctx.router)
         row["one_liner"] = out.text
     if out.text is None:
         notes["text_dropped_numbers"] = list(out.dropped_numbers)  # failed the number check
@@ -363,6 +402,7 @@ class Summary:
     errors: int = 0
     by_status: Counter = field(default_factory=Counter)
     by_category: Counter = field(default_factory=Counter)  # (category, status)
+    cards: Counter = field(default_factory=Counter)  # "results:ok", "people:check_source", ...
     rules_labelled: int = 0
     llm_labelled: int = 0
     llm_calls: int = 0
@@ -376,6 +416,7 @@ class Summary:
             f"skipped_existing={self.skipped_existing} errors={self.errors}",
             "status: " + " ".join(f"{s}={self.by_status.get(s, 0)}" for s in STATUSES),
             f"labels: rules={self.rules_labelled} llm={self.llm_labelled}",
+            "cards: " + (" ".join(f"{k}={v}" for k, v in sorted(self.cards.items())) or "none"),
             f"llm calls: {self.llm_calls} ({self.cache_hits} cache hits), paid-equivalent "
             f"Rs {self.paid_equivalent_inr:.2f}; actual cost Rs {ACTUAL_COST_INR:.2f} (free tier)",
         ]
@@ -407,6 +448,8 @@ def run_once(
     now: datetime | None = None,
     fetchers=None,
     pdf=pdf_excerpt,
+    cards: bool = True,
+    build_card=None,
 ) -> Summary:
     now = now or datetime.now(IST)
     symbols = symbols or portfolio_symbols()
@@ -441,6 +484,8 @@ def run_once(
         holdings=load_portfolio().get("weights") or {},
         price_volume=price_volume_days(db, window_start - timedelta(days=1)),
         pdf=pdf,
+        db=db,
+        build_card=build_card or (CardBuilder(router=router, db=db) if cards else None),
     )
 
     unsaved: list[dict] = []
@@ -462,6 +507,11 @@ def run_once(
                 continue
             summary.rows.append(row)
             unsaved.append(row)
+            state = row["card_json"].get("state") or (
+                "pending" if row["card_json"].get("card_error") else None
+            )
+            if state:
+                summary.cards[f"{row['card_json'].get('card_type', 'card')}:{state}"] += 1
             status = row["status"] or "pending"
             summary.by_status[status] += 1
             summary.by_category[
@@ -494,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--source", choices=sorted(FETCHERS), help="default: nse, then rss, then bse"
     )
+    parser.add_argument("--symbol", action="append", help="only this symbol (repeatable)")
     parser.add_argument(
         "--dry-run", action="store_true", help="classify but do not write to Supabase"
     )
@@ -511,7 +562,9 @@ def main(argv: list[str] | None = None) -> int:
 
     while True:
         try:
-            summary = run_once(since=args.since, source=args.source, db=db)
+            summary = run_once(
+                since=args.since, source=args.source, db=db, symbols=args.symbol
+            )
         except SourceError as exc:
             log.error("%s", exc)  # stop and report; fixtures are never a stand-in for a live source
             return 1

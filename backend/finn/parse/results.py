@@ -316,8 +316,13 @@ def results_facts(
     client: ResultsClient | None = None,
     fetch: Callable[[str], bytes] | None = None,
     screener_fetch: Callable[[str], screener.ScreenerCompany] | None = None,
+    period_end: date | None = None,
 ) -> list[Fact]:
-    """Facts for the current quarter, the previous quarter and the same quarter last year."""
+    """Facts for the current quarter, the previous quarter and the same quarter last year.
+
+    The current quarter is the latest one filed, or the quarter ending `period_end` (a quarter-end
+    date) when a caller needs the numbers of one particular filing.
+    """
     client = client or nse.NSEClient()
     fetch = fetch or fetch_xbrl
     screener_fetch = screener_fetch or screener.fetch_company
@@ -335,7 +340,8 @@ def results_facts(
         return company_cache[0]
 
     if rows:
-        current_end = date.fromisoformat(max(r["period_end"] for r in rows))
+        current_end = period_end or date.fromisoformat(max(r["period_end"] for r in rows))
+        quarter_for_end(current_end)  # must be a quarter end
         basis = (
             "consolidated"
             if any(
@@ -346,7 +352,9 @@ def results_facts(
         )
     else:
         columns = company().tables["quarterly"].df.columns
-        current_end = parse_period(columns[-1]).end
+        current_end = period_end or parse_period(columns[-1]).end
+        if period_end is not None:
+            quarter_for_end(current_end)
         basis = company().basis
     log.info("%s: current quarter %s, basis %s", symbol, quarter_for_end(current_end), basis)
 

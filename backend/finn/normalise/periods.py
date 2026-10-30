@@ -206,6 +206,23 @@ def period_label(text: str) -> str:
     return parse_period(text).label
 
 
+_MONTH_NAME = {i: calendar.month_abbr[i] for i in range(1, 13)}
+
+
+def period_display(period: Period | str) -> str:
+    """How a card names a period: 'FY27 Q2 (Jul-Sep 2026)'. H1, 9M and FY read the same way."""
+    p = parse_period(period) if isinstance(period, str) else period
+    end = p.end
+    months = {"Q": 3, "H1": 6, "H2": 6, "9M": 9, "FY": 12}[p.kind]
+    start_month = (end.month - months) % 12 + 1
+    start_year = end.year if start_month <= end.month else end.year - 1
+    head = f"FY{p.fy % 100:02d}" + (f" Q{p.quarter}" if p.kind == "Q" else f" {p.kind}")
+    if p.kind == "FY":
+        head = f"FY{p.fy % 100:02d}"
+    span = f"{_MONTH_NAME[start_month]}{'' if start_year == end.year else f' {start_year}'}"
+    return f"{head} ({span}-{_MONTH_NAME[end.month]} {end.year})"
+
+
 # -- derived periods ------------------------------------------------------------------------
 
 
@@ -287,6 +304,7 @@ __all__ = [
     "fiscal_year",
     "parse_date_text",
     "parse_period",
+    "period_display",
     "period_from_range",
     "period_label",
     "quarter_for_end",
