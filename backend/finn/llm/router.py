@@ -6,10 +6,10 @@
 * Cached by sha256(model + prompt) in the `cache` table (and an in-process dict in front of it).
 * A row in llm_calls for every call that returned: step, model, tokens in and out, latency,
   paid-equivalent cost in INR, cache hit.
-* Rate limits are normal. On HTTP 429 the call waits (Retry-After, capped) and retries once; still
-  429, or a wait longer than the cap (a daily quota), it fails over to the other free provider's
-  role once; still nothing and LLMPending is raised so the caller marks the item pending and moves
-  on. Nothing loops.
+* Rate limits are normal (a 5xx overload counts as one). On HTTP 429 the call waits (Retry-After,
+  capped) and retries once; still 429, or a wait longer than the cap (a daily quota), it fails over
+  to the other free provider's role once; still nothing and LLMPending is raised so the caller marks
+  the item pending and moves on. Nothing loops.
 * Output is JSON. A reply that is not valid JSON, or does not fit `schema`, is retried once with a
   nudge and then raises LLMOutputError.
 
@@ -43,6 +43,7 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 ACTUAL_COST_INR = 0.0  # the free-tier rule: what FINN really pays
 DEFAULT_MAX_OUTPUT = 1024
 TIMEOUT_S = 60.0
+BUSY_STATUS = {500, 502, 503, 504}  # a provider that is down or overloaded is treated as limited
 
 
 class LLMError(RuntimeError):
@@ -421,6 +422,8 @@ class Router:
             raise LLMError(f"transport error: {type(exc).__name__}") from exc
         if resp.status_code == 429:
             raise RateLimited(_retry_after(resp))
+        if resp.status_code in BUSY_STATUS:  # overloaded: handled like a rate limit
+            raise RateLimited(_retry_after(resp) or 5.0)
         if resp.status_code >= 400:
             message = ""
             try:

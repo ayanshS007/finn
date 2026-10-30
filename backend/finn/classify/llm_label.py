@@ -76,7 +76,8 @@ def build_prompt(
         "Label a stock exchange filing with one category. Use only the provided text. "
         "Do not use outside knowledge.\n\n"
         f"Categories:\n{_catalogue(categories, allowed)}\n\n"
-        "If no category fits, answer unclassified. Answer unclassified rather than guess."
+        "Label what the filing says has happened or been decided, not what a future meeting will "
+        "consider. If no category fits, answer unclassified. Answer unclassified rather than guess."
         f"{known}\n\n"
         f"Exchange category: {category_raw or '(none)'}\n"
         f"Subject: {subject or '(none)'}\n"
@@ -121,6 +122,9 @@ def label_with_llm(
             match = quote_match(out.quote, source)
             if not categories.is_valid(category, tier):
                 last = LlmLabel(False, category, tier, out.quote, match, f"bad tier {tier!r}")
+            elif (veto := categories.quote_vetoes.get(category)) and veto.search(out.quote):
+                reason = "the quote reads as a notice of a future event"
+                last = LlmLabel(False, category, tier, out.quote, match, reason)
             elif match < THRESHOLD:
                 last = LlmLabel(False, category, tier, out.quote, match, f"quote_match {match:.2f}")
             else:

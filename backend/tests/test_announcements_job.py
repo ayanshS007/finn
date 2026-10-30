@@ -372,3 +372,29 @@ def test_dry_run_writes_nothing_and_a_db_run_upserts_every_row_once():
     db = FakeDb()
     run([ann("1")], db=None)
     assert db.upserted == []
+
+
+def test_rows_done_before_a_fatal_error_are_still_saved():
+    db = FakeDb()
+    first = ann("20", text="Board approves capex for capacity expansion", category="Updates")
+    needs_model = ann("21", symbol="HAL", category="General Updates", text="HAL update")
+    needs_model["published_at"] = (NOW - timedelta(hours=1)).isoformat()  # processed second
+    router = ScriptedRouter(
+        lambda step, prompt: (
+            LLMConfigError("GROQ_API_KEY is not set")
+            if step == "label"
+            else {"line": "Board approves expansion."}
+        )
+    )
+    with pytest.raises(LLMConfigError):
+        run([first, needs_model], router, db=db)
+    assert [r["source_id"] for r in db.upserted] == ["20"]
+
+
+def test_rows_are_upserted_in_batches(monkeypatch):
+    monkeypatch.setattr(job, "FLUSH_EVERY", 2)
+    batches = []
+    db = FakeDb()
+    db.upsert_filings = lambda rows: batches.append([r["source_id"] for r in rows]) or len(rows)
+    run([ann(str(i), text="Board approves capex", category="Updates") for i in range(5)], db=db)
+    assert [len(b) for b in batches] == [2, 2, 1]

@@ -60,6 +60,29 @@ def test_the_threshold_is_0_4_of_the_4_word_runs():
     assert out.ok is (m >= 0.4)
 
 
+def test_results_label_whose_quote_is_a_notice_of_a_future_meeting_is_rejected():
+    """Real case: a Reliance filing about Jio Platforms' listing mentioned that JPL's board
+    meeting 'is scheduled to consider' results; the small model called the filing results."""
+    excerpt = "Further, a meeting of board of directors of JPL is scheduled to consider the financial results of JPL for the quarter."
+    future = {
+        "category": "results",
+        "tier": None,
+        "quote": "is scheduled to consider the financial results of JPL for the quarter",
+    }
+    other = {
+        "category": "M&A",
+        "tier": None,
+        "quote": "a meeting of board of directors of JPL is scheduled to consider the financial results",
+    }
+    out, router = run([future, other], excerpt=excerpt)
+    assert out.ok and out.category == "M&A" and len(router.calls) == 2
+    out, _ = run([future, future], excerpt=excerpt)
+    assert not out.ok and "future event" in out.reason
+    # the same words under another category are not vetoed
+    approved = {"category": "results", "tier": None, "quote": GOOD_QUOTE}
+    assert run([approved])[0].ok
+
+
 def test_unknown_category_and_missing_tier_are_failures_not_guesses():
     out, _ = run([{"category": "weather", "tier": None, "quote": GOOD_QUOTE}] * 2)
     assert not out.ok and "unknown category" in out.reason

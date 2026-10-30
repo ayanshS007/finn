@@ -29,7 +29,10 @@ macros:
 
 categories:
   results:
-    definition: 'The company filed its quarterly, half-yearly or annual financial results (or the board meeting outcome that approves them).'
+    # An LLM label of `results` is rejected when its quote reads as a notice of a future meeting
+    # (the small model otherwise labels "board meeting will consider results" as results).
+    quote_veto: '\bto consider\b|\bwill consider\b|\bscheduled\b|\bwill be held\b|\bintimation\b'
+    definition: 'The company filed its quarterly, half-yearly or annual financial results, or the board meeting outcome that approves them; a notice that a meeting will consider results is not results.'
     rules:
       - name: results_filing_category
         priority: 10

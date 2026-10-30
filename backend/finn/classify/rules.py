@@ -10,7 +10,7 @@ finn.classify.llm_label.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -59,6 +59,8 @@ class Categories:
     definitions: dict[str, str]
     tiers: dict[str, dict[str, str]]  # category -> tier -> description (empty: no tiers)
     rules: tuple[Rule, ...]
+    # category -> pattern that disqualifies an LLM label whose quote matches it
+    quote_vetoes: dict[str, re.Pattern] = field(default_factory=dict)
 
     @property
     def names(self) -> list[str]:
@@ -100,11 +102,14 @@ def parse_categories(data: dict) -> Categories:
     definitions: dict[str, str] = {}
     tiers: dict[str, dict[str, str]] = {}
     rules: list[Rule] = []
+    vetoes: dict[str, re.Pattern] = {}
     for name, body in (data.get("categories") or {}).items():
         if not body.get("definition"):
             raise RulesError(f"{name}: missing definition")
         definitions[name] = body["definition"]
         tiers[name] = dict(body.get("tiers") or {})
+        if body.get("quote_veto"):
+            vetoes[name] = _compile(body["quote_veto"], macros, f"{name}/quote_veto")
         for raw in body.get("rules") or []:
             where = f"{name}/{raw.get('name')}"
             if not raw.get("name") or not (raw.get("category_raw") or raw.get("subject")):
@@ -128,7 +133,7 @@ def parse_categories(data: dict) -> Categories:
     if len(definitions) != 17:
         raise RulesError(f"expected 17 categories, found {len(definitions)}")
     rules.sort(key=lambda r: (r.priority, r.order))
-    return Categories(definitions, tiers, tuple(rules))
+    return Categories(definitions, tiers, tuple(rules), vetoes)
 
 
 def load_categories(path: Path | None = None) -> Categories:

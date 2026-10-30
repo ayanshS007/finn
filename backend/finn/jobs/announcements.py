@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from finn.classify import grader, llm_label
 from finn.classify.rules import Categories, RuleLabel, default_categories
 from finn.config import REPO_ROOT, load_portfolio, portfolio_names, portfolio_symbols
@@ -54,6 +56,7 @@ log = logging.getLogger("finn.jobs.announcements")
 
 SOURCE_ORDER = ("nse", "rss", "bse")
 FIXTURE_DIR = REPO_ROOT / "backend" / "tests" / "fixtures"
+FLUSH_EVERY = 10  # rows per Supabase upsert, so a long run keeps its progress
 EXCERPT_STORED = 3000  # characters of attachment text kept in filings.text_excerpt
 STATUSES = ("card", "oneliner", "drawer", "pending")
 
@@ -440,33 +443,47 @@ def run_once(
         pdf=pdf,
     )
 
-    for ann in todo:
-        try:
-            row = process(ann, name, ctx)
-        except LLMConfigError:
-            raise
-        except Exception:  # one bad filing must not stop the run
-            log.exception("could not process %s %s", ann.get("symbol"), ann.get("source_id"))
-            summary.errors += 1
-            continue
-        summary.rows.append(row)
-        status = row["status"] or "pending"
-        summary.by_status[status] += 1
-        summary.by_category[
-            (row["category"] or ("(pending)" if status == "pending" else "(unlabelled)"), status)
-        ] += 1
-        if row["label_source"] == "rules":
-            summary.rules_labelled += 1
-        elif row["label_source"] == "llm":
-            summary.llm_labelled += 1
+    unsaved: list[dict] = []
+
+    def flush() -> None:
+        if db is not None and unsaved:
+            db.upsert_filings(unsaved)
+            unsaved.clear()
+
+    try:
+        for ann in todo:
+            try:
+                row = process(ann, name, ctx)
+            except LLMConfigError:
+                raise
+            except Exception:  # one bad filing must not stop the run
+                log.exception("could not process %s %s", ann.get("symbol"), ann.get("source_id"))
+                summary.errors += 1
+                continue
+            summary.rows.append(row)
+            unsaved.append(row)
+            status = row["status"] or "pending"
+            summary.by_status[status] += 1
+            summary.by_category[
+                (
+                    row["category"] or ("(pending)" if status == "pending" else "(unlabelled)"),
+                    status,
+                )
+            ] += 1
+            if row["label_source"] == "rules":
+                summary.rules_labelled += 1
+            elif row["label_source"] == "llm":
+                summary.llm_labelled += 1
+            if len(unsaved) >= FLUSH_EVERY:
+                flush()
+    finally:
+        flush()  # what is done is kept even if the run stops early
 
     new_calls = store.calls[calls_before:]
     summary.llm_calls = sum(1 for c in new_calls if not c["cache_hit"])
     summary.cache_hits = sum(1 for c in new_calls if c["cache_hit"])
     summary.paid_equivalent_inr = round(sum(c["cost_inr"] for c in new_calls), 4)
 
-    if db is not None and summary.rows:
-        db.upsert_filings(summary.rows)
     return summary
 
 
@@ -482,7 +499,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--report", type=Path, help="write the summary and table here (markdown)")
     args = parser.parse_args(argv)
+    load_dotenv(REPO_ROOT / ".env")  # the laptop keeps its keys here; real environment wins
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    for noisy in ("httpx", "httpcore", "hpack"):  # request lines carry URLs; keep logs readable
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     replay = args.source == "fixtures"
     db = None if (args.dry_run or replay) else Db.service()

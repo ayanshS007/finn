@@ -211,3 +211,13 @@ def test_paid_equivalent_is_an_estimate_in_inr_for_unknown_models_too():
 
 def test_router_default_construction_needs_no_network():
     assert isinstance(Router(config=load_models()), Router)
+
+
+def test_a_503_overload_is_treated_like_a_rate_limit_and_fails_over():
+    def handler(request):
+        if is_groq(request):
+            return httpx.Response(503, json={"error": {"message": "high demand"}})
+        return gemini_reply('{"answer": "g"}')
+
+    router = make_router(handler)
+    assert router.call("label", "small", "p", Pick).failed_over
